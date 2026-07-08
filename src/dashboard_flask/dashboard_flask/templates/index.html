@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>ROS2 Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #0e0f13; color: #e6e6e6;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    height: 100vh; height: 100dvh;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  /* ---------- top bar / tabs ---------- */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: #14161a; border-bottom: 1px solid #23262e;
+  }
+  .topbar h1 { font-size: 15px; font-weight: 600; margin: 0; color: #9fd4ff; }
+  .status_dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #555; margin-right: 8px; }
+  .status_dot.live { background: #4cff88; }
+
+  .tabs { display: flex; gap: 6px; }
+  .tab_btn {
+    background: #1d2026; border: 1px solid #2a2e37; color: #b7bcc7;
+    padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  }
+  .tab_btn.active { background: #2a5fd0; border-color: #2a5fd0; color: #fff; }
+
+  .tab_page { display: none; height: calc(100vh - 49px); height: calc(100dvh - 49px); overflow: hidden; }
+  .tab_page.active { display: block; }
+
+  /* ---------- camera tab: full-bleed video with overlays ---------- */
+  #camera_stage { position: relative; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  #video_feed { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+  .holo_btn {
+    position: absolute; top: 14px; right: 14px;
+    background: rgba(29,32,38,0.85); border: 1px solid #3a3f4b; color: #e6e6e6;
+    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    cursor: pointer; backdrop-filter: blur(4px);
+  }
+  .holo_btn.on { background: rgba(255,171,64,0.9); border-color: #ffab40; color: #241900; }
+
+  .mode_btn {
+    position: absolute; top: 62px; right: 14px;
+    background: rgba(29,32,38,0.85); border: 1px solid #3a3f4b; color: #e6e6e6;
+    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    cursor: pointer; backdrop-filter: blur(4px);
+  }
+
+  #arrow_pad {
+    position: absolute; bottom: 24px; left: 24px;
+    width: 160px; height: 160px;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .arrow_btn {
+    background: rgba(18,20,26,0.65); border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px; color: #e6e6e6; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none; user-select: none; backdrop-filter: blur(2px);
+  }
+  .arrow_btn:active, .arrow_btn.pressed {
+    background: rgba(76,141,255,0.85); border-color: #4c8dff;
+  }
+  #arrow_pad.holo .arrow_btn:active, #arrow_pad.holo .arrow_btn.pressed {
+    background: rgba(255,171,64,0.9); border-color: #ffab40;
+  }
+  #arrow_up { grid-column: 2; grid-row: 1; }
+  #arrow_left { grid-column: 1; grid-row: 2; }
+  #arrow_right { grid-column: 3; grid-row: 2; }
+  #arrow_down { grid-column: 2; grid-row: 3; }
+  #arrow_up_left { grid-column: 1; grid-row: 1; }
+  #arrow_up_right { grid-column: 3; grid-row: 1; }
+  #arrow_down_left { grid-column: 1; grid-row: 3; }
+  #arrow_down_right { grid-column: 3; grid-row: 3; }
+
+  .diag_btn { display: none; font-size: 15px; }
+  #arrow_pad.holo .diag_btn { display: flex; }
+  #speed_slider_wrap {
+    position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    display: none; flex-direction: column; align-items: center; gap: 6px;
+    background: rgba(20,22,26,0.75); border: 1px solid #2a2e37; border-radius: 10px;
+    padding: 8px 16px; backdrop-filter: blur(4px);
+  }
+  #speed_slider_wrap.visible { display: flex; }
+  #speed_slider_wrap label {
+    font-size: 11px; color: #b7bcc7; font-variant-numeric: tabular-nums;
+  }
+  #speed_slider {
+    width: 160px; -webkit-appearance: none; height: 28px; background: transparent;
+  }
+  #speed_slider::-webkit-slider-runnable-track {
+    height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px;
+  }
+  #speed_slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
+    background: #4c8dff; margin-top: -8px; box-shadow: 0 0 10px rgba(76,141,255,0.6);
+  }
+
+  .vel_readout {
+    position: absolute; top: 14px; left: 14px;
+    background: rgba(20,22,26,0.75); border: 1px solid #2a2e37; border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; color: #b7bcc7; font-variant-numeric: tabular-nums;
+    backdrop-filter: blur(4px);
+  }
+
+  #joystick_pad {
+    position: absolute; bottom: 24px; left: 24px;
+    width: 160px; height: 160px; border-radius: 50%;
+    background: rgba(18,20,26,0.55); border: 1px solid rgba(255,255,255,0.15);
+    touch-action: none; backdrop-filter: blur(2px);
+  }
+  #joystick_knob {
+    width: 48px; height: 48px; border-radius: 50%; background: #4c8dff;
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    box-shadow: 0 0 14px rgba(76,141,255,0.6);
+  }
+  #joystick_pad.holo #joystick_knob { background: #ffab40; box-shadow: 0 0 14px rgba(255,171,64,0.6); }
+
+  #rotate_slider_wrap {
+    position: absolute; bottom: 24px; right: 24px; width: 160px;
+    display: none; flex-direction: column; align-items: center; gap: 6px;
+  }
+  #rotate_slider_wrap.visible { display: flex; }
+  #rotate_slider_wrap label { font-size: 11px; color: #b7bcc7; }
+  #rotate_slider {
+    width: 160px; -webkit-appearance: none; height: 34px; background: transparent;
+  }
+  #rotate_slider::-webkit-slider-runnable-track {
+    height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px;
+  }
+  #rotate_slider::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%;
+    background: #ffab40; margin-top: -10px; box-shadow: 0 0 10px rgba(255,171,64,0.6);
+  }
+
+  /* ---------- rotate-device overlay (small screens, portrait) ---------- */
+  #rotate_overlay {
+    display: none;
+    position: fixed; inset: 0; z-index: 9999;
+    background: #0e0f13; color: #e6e6e6;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; padding: 24px;
+  }
+  #rotate_overlay .icon { font-size: 48px; animation: rotate_hint 1.6s ease-in-out infinite; }
+  #rotate_overlay p { margin: 0; font-size: 15px; color: #b7bcc7; max-width: 260px; }
+  @keyframes rotate_hint {
+    0%, 100% { transform: rotate(0deg); }
+    50% { transform: rotate(90deg); }
+  }
+  @media (orientation: portrait) and (max-width: 900px) {
+    #rotate_overlay { display: flex; }
+    #main_content { display: none; }
+  }
+
+  /* ---------- suspect match modal ---------- */
+  #suspect_modal {
+    display: none;
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,0.7);
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #suspect_modal.visible { display: flex; }
+  .modal_card {
+    background: #1d2026; border: 1px solid #2a2e37; border-radius: 12px;
+    width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
+    padding: 16px;
+  }
+  .modal_head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 15px; font-weight: 600; color: #9fd4ff; margin-bottom: 14px;
+  }
+  .modal_close {
+    background: none; border: none; color: #b7bcc7; font-size: 24px;
+    line-height: 1; cursor: pointer; padding: 0 4px;
+  }
+  .modal_images { display: flex; gap: 12px; }
+  .modal_img_col { flex: 1; min-width: 0; }
+  .modal_img_label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #8a90a0; margin-bottom: 6px;
+  }
+  .modal_img {
+    width: 100%; aspect-ratio: 3 / 4; object-fit: contain;
+    background: #000; border-radius: 8px; border: 1px solid #2a2e37;
+  }
+  .compare_status {
+    margin-top: 14px; font-size: 13px; color: #b7bcc7; min-height: 18px;
+  }
+  .compare_result {
+    margin-top: 8px; font-size: 14px; line-height: 1.5;
+    white-space: pre-wrap; font-variant-numeric: tabular-nums;
+  }
+  .compare_result.match { color: #4cff88; }
+  .compare_result.nomatch { color: #ff8b5b; }
+  .modal_actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+  .compare_btn {
+    background: #2a5fd0; border: 1px solid #2a5fd0; color: #fff;
+    padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  .compare_btn:disabled { opacity: 0.5; cursor: default; }
+
+  /* simple upload-preview modal */
+  #upload_modal {
+    display: none;
+    position: fixed; inset: 0; z-index: 500;
+    background: rgba(0,0,0,0.7);
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #upload_modal.visible { display: flex; }
+  #upload_modal .modal_card { max-width: 420px; }
+  #upload_preview_img {
+    width: 100%; max-height: 60vh; object-fit: contain;
+    background: #000; border-radius: 8px; border: 1px solid #2a2e37;
+  }
+  #upload_status { margin-top: 12px; font-size: 13px; color: #b7bcc7; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<div id="rotate_overlay">
+  <div class="icon">&#128241;</div>
+  <p>Please rotate your device to landscape for the best view of the dashboard.</p>
+</div>
+
+<div id="main_content">
+<div class="topbar">
+  <h1><span id="conn_dot" class="status_dot"></span>ROS2 Dashboard</h1>
+  <div class="tabs">
+    <button id="upload_btn" class="tab_btn">Upload Image</button>
+    <button id="capture_btn" class="tab_btn">Capture (YOLO)</button>
+    <input id="upload_input" type="file" accept="image/*" style="display:none;">
+  </div>
+</div>
+
+<!-- ================= CAMERA VIEW ================= -->
+<div id="camera_tab" class="tab_page active">
+  <div id="camera_stage">
+    <img id="video_feed" src="/video_feed" alt="camera feed">
+
+    <button id="holo_btn" class="holo_btn">Holonomic: OFF</button>
+    <button id="mode_btn" class="mode_btn">Control: Arrows</button>
+
+    <div class="vel_readout" id="vel_readout">linear: 0.00 &nbsp; strafe: 0.00 &nbsp; angular: 0.00</div>
+
+    <div id="speed_slider_wrap">
+      <label id="speed_label">Speed: 60%</label>
+      <input id="speed_slider" type="range" min="10" max="100" value="60">
+    </div>
+
+    <div id="joystick_pad" style="display:none;">
+      <div id="joystick_knob"></div>
+    </div>
+
+    <div id="arrow_pad">
+      <button id="arrow_up_left" class="arrow_btn diag_btn">&#8598;</button>
+      <button id="arrow_up" class="arrow_btn">&#9650;</button>
+      <button id="arrow_up_right" class="arrow_btn diag_btn">&#8599;</button>
+      <button id="arrow_left" class="arrow_btn">&#9664;</button>
+      <button id="arrow_right" class="arrow_btn">&#9654;</button>
+      <button id="arrow_down_left" class="arrow_btn diag_btn">&#8601;</button>
+      <button id="arrow_down" class="arrow_btn">&#9660;</button>
+      <button id="arrow_down_right" class="arrow_btn diag_btn">&#8600;</button>
+    </div>
+
+    <div id="rotate_slider_wrap">
+      <label>Rotate (angular.z)</label>
+      <input id="rotate_slider" type="range" min="-100" max="100" value="0">
+    </div>
+  </div>
+</div>
+
+<!-- ================= UPLOAD PREVIEW MODAL ================= -->
+<div id="upload_modal">
+  <div class="modal_card">
+    <div class="modal_head">
+      <span>Uploaded Reference Image</span>
+      <button id="upload_modal_close" class="modal_close">&times;</button>
+    </div>
+    <img id="upload_preview_img" alt="uploaded reference">
+    <div id="upload_status"></div>
+  </div>
+</div>
+
+<!-- ================= SUSPECT MATCH MODAL ================= -->
+<div id="suspect_modal">
+  <div class="modal_card">
+    <div class="modal_head">
+      <span>Suspect Feature Match</span>
+      <button id="modal_close" class="modal_close">&times;</button>
+    </div>
+    <div class="modal_images">
+      <div class="modal_img_col">
+        <div class="modal_img_label">Reference (uploaded)</div>
+        <img id="ref_preview" class="modal_img" alt="reference">
+      </div>
+      <div class="modal_img_col">
+        <div class="modal_img_label">Candidate (YOLO crop)</div>
+        <img id="cand_preview" class="modal_img" alt="candidate">
+      </div>
+    </div>
+    <div id="compare_status" class="compare_status"></div>
+    <div id="compare_result" class="compare_result"></div>
+    <div class="modal_actions">
+      <button id="compare_btn" class="compare_btn">Start Compare</button>
+    </div>
+  </div>
+</div>
+
+</div> <!-- /#main_content -->
+
+<script>
+const socket = io();
+const connDot = document.getElementById('conn_dot');
+socket.on('connect', () => connDot.classList.add('live'));
+socket.on('disconnect', () => connDot.classList.remove('live'));
+
+// Best-effort landscape lock. Most mobile browsers only honor this inside
+// fullscreen (or an installed PWA) and reject it otherwise — the CSS
+// rotate-device overlay above is the real fallback that always works.
+function tryLockLandscape() {
+  if (screen.orientation && screen.orientation.lock) {
+    screen.orientation.lock('landscape').catch(() => {});
+  }
+}
+tryLockLandscape();
+document.addEventListener('click', tryLockLandscape, { once: true });
+
+// ---------------- Suspect matcher: upload / capture / compare ----------------
+const uploadBtn = document.getElementById('upload_btn');
+const uploadInput = document.getElementById('upload_input');
+const captureBtn = document.getElementById('capture_btn');
+const modal = document.getElementById('suspect_modal');
+const modalClose = document.getElementById('modal_close');
+const refPreview = document.getElementById('ref_preview');
+const candPreview = document.getElementById('cand_preview');
+const compareBtn = document.getElementById('compare_btn');
+const compareStatus = document.getElementById('compare_status');
+const compareResult = document.getElementById('compare_result');
+
+// simple upload-preview modal
+const uploadModal = document.getElementById('upload_modal');
+const uploadModalClose = document.getElementById('upload_modal_close');
+const uploadPreviewImg = document.getElementById('upload_preview_img');
+const uploadStatus = document.getElementById('upload_status');
+
+let haveReference = false;
+let haveCandidate = false;
+
+function openModal() { modal.classList.add('visible'); }
+function closeModal() { modal.classList.remove('visible'); }
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+function openUploadModal() { uploadModal.classList.add('visible'); }
+function closeUploadModal() { uploadModal.classList.remove('visible'); }
+uploadModalClose.addEventListener('click', closeUploadModal);
+uploadModal.addEventListener('click', (e) => { if (e.target === uploadModal) closeUploadModal(); });
+
+function refreshCompareEnabled() {
+  compareBtn.disabled = !(haveReference && haveCandidate);
+}
+
+function bust(url) { return url + '?t=' + Date.now(); }
+
+// --- Upload reference image (simple preview popup) ---
+uploadBtn.addEventListener('click', () => uploadInput.click());
+uploadInput.addEventListener('change', async () => {
+  if (!uploadInput.files || !uploadInput.files[0]) return;
+  const file = uploadInput.files[0];
+
+  // show a local preview instantly, before the upload round-trips
+  uploadPreviewImg.src = URL.createObjectURL(file);
+  uploadStatus.textContent = 'Uploading...';
+  openUploadModal();
+
+  const fd = new FormData();
+  fd.append('image', file);
+  try {
+    const r = await fetch('/suspect/upload_reference', { method: 'POST', body: fd });
+    const d = await r.json();
+    if (d.ok) {
+      haveReference = true;
+      // swap to the server-saved copy so preview matches what compare will use
+      uploadPreviewImg.src = bust('/suspect/reference.jpg');
+      refPreview.src = bust('/suspect/reference.jpg');   // keep compare modal in sync
+      uploadStatus.textContent = 'Reference saved.';
+    } else {
+      uploadStatus.textContent = 'Upload failed: ' + d.message;
+    }
+  } catch (err) {
+    uploadStatus.textContent = 'Upload error: ' + err;
+  }
+  refreshCompareEnabled();
+  uploadInput.value = '';   // allow re-selecting the same file
+});
+
+// --- Capture candidate from YOLO detector ---
+captureBtn.addEventListener('click', async () => {
+  compareStatus.textContent = 'Capturing candidate from YOLO...';
+  compareResult.textContent = '';
+  compareResult.className = 'compare_result';
+  openModal();
+  try {
+    const r = await fetch('/suspect/capture_candidate', { method: 'POST' });
+    const d = await r.json();
+    if (d.ok) {
+      haveCandidate = true;
+      candPreview.src = bust('/suspect/candidate.jpg');
+      compareStatus.textContent = 'Candidate captured. ' +
+        (haveReference ? 'Ready to compare.' : 'Now upload a reference image.');
+    } else {
+      compareStatus.textContent = 'Capture failed: ' + d.message;
+    }
+  } catch (err) {
+    compareStatus.textContent = 'Capture error: ' + err;
+  }
+  refreshCompareEnabled();
+});
+
+// --- Run comparison ---
+compareBtn.addEventListener('click', async () => {
+  compareBtn.disabled = true;
+  compareResult.textContent = '';
+  compareResult.className = 'compare_result';
+  compareStatus.textContent =
+    'Comparing... first run triggers a cold VLM load and can take several minutes.';
+  try {
+    const r = await fetch('/suspect/compare', { method: 'POST' });
+    const d = await r.json();
+    if (!d.ok) {
+      compareStatus.textContent = 'Compare failed: ' + d.message;
+    } else {
+      compareStatus.textContent = 'Compare complete.';
+      renderResult(d.match, d.detail);
+    }
+  } catch (err) {
+    compareStatus.textContent = 'Compare error: ' + err;
+  }
+  refreshCompareEnabled();
+});
+
+function renderResult(match, detail) {
+  let text = '';
+  if (match === true)  text = '✓ MATCH — worth a closer look';
+  else if (match === false) text = '✗ NO MATCH';
+  else text = 'No parseable result';
+  if (detail) text += '\n\n' + detail;
+  compareResult.textContent = text;
+  compareResult.className = 'compare_result ' +
+    (match === true ? 'match' : (match === false ? 'nomatch' : ''));
+}
+
+// async result pushes (in case the service returned before the topic landed,
+// or the match arrives slightly later)
+socket.on('match_result', (d) => {
+  if (modal.classList.contains('visible')) {
+    renderResult(d.match, compareResult.textContent.includes('\n')
+      ? compareResult.textContent.split('\n\n')[1] : null);
+  }
+});
+socket.on('match_detail', (d) => {
+  if (modal.classList.contains('visible') && d.detail) {
+    // append/refresh detail under whatever match line is shown
+    const firstLine = compareResult.textContent.split('\n\n')[0] || '';
+    compareResult.textContent = firstLine + '\n\n' + d.detail;
+  }
+});
+
+// ---------------- Holonomic mode ----------------
+const holoBtn = document.getElementById('holo_btn');
+const joyPad = document.getElementById('joystick_pad');
+const arrowPad = document.getElementById('arrow_pad');
+const rotateWrap = document.getElementById('rotate_slider_wrap');
+const rotateSlider = document.getElementById('rotate_slider');
+
+let holonomic = false;
+
+function applyHolonomicUI() {
+  holoBtn.textContent = 'Holonomic: ' + (holonomic ? 'ON' : 'OFF');
+  holoBtn.classList.toggle('on', holonomic);
+  joyPad.classList.toggle('holo', holonomic);
+  arrowPad.classList.toggle('holo', holonomic);
+  rotateWrap.classList.toggle('visible', holonomic);
+  if (!holonomic) rotateSlider.value = 0;
+}
+
+fetch('/holonomic').then(r => r.json()).then(d => {
+  holonomic = !!d.enabled;
+  applyHolonomicUI();
+});
+
+holoBtn.addEventListener('click', () => {
+  holonomic = !holonomic;
+  applyHolonomicUI();
+  socket.emit('set_holonomic', { enabled: holonomic });
+});
+
+// stay in sync if holonomic mode is toggled from another tab/client
+socket.on('holonomic_state', (d) => {
+  holonomic = !!d.enabled;
+  applyHolonomicUI();
+});
+
+// ---------------- cmd_vel joystick ----------------
+const knob = document.getElementById('joystick_knob');
+const velReadout = document.getElementById('vel_readout');
+
+const MAX_LINEAR = 0.5;    // m/s, forward/back (and strafe, in holonomic mode)
+const MAX_ANGULAR = 1.0;   // rad/s
+const PAD_RADIUS = 80;     // px, matches #joystick_pad width/2
+const SEND_HZ = 10;
+
+let dragging = false;
+let vx = 0, vy = 0, wz = 0;
+
+function setKnob(dx, dy) {
+  knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+}
+
+function updateReadout() {
+  velReadout.textContent =
+    `linear: ${vx.toFixed(2)} \u00a0 strafe: ${vy.toFixed(2)} \u00a0 angular: ${wz.toFixed(2)}`;
+}
+
+function updateFromPointer(clientX, clientY) {
+  const rect = joyPad.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  let dx = clientX - cx;
+  let dy = clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist > PAD_RADIUS) {
+    dx = dx / dist * PAD_RADIUS;
+    dy = dy / dist * PAD_RADIUS;
+  }
+  setKnob(dx, dy);
+
+  vx = (-dy / PAD_RADIUS) * MAX_LINEAR;
+  if (holonomic) {
+    // horizontal drag = strafe; rotation comes from the separate slider
+    // NOTE: positive linear.y = strafe LEFT (REP103 / matches firmware IK),
+    // so dragging right (positive dx) must produce NEGATIVE vy.
+    vy = (-dx / PAD_RADIUS) * MAX_LINEAR;
+  } else {
+    // horizontal drag = turn (differential-style arc steering)
+    wz = (-dx / PAD_RADIUS) * MAX_ANGULAR;
+  }
+  updateReadout();
+}
+
+function resetKnob() {
+  setKnob(0, 0);
+  vx = 0; vy = 0;
+  if (!holonomic) wz = 0;
+  updateReadout();
+  socket.emit('cmd_vel', { linear: vx, strafe: vy, angular: wz });
+}
+
+function startDrag(e) {
+  dragging = true;
+  const p = e.touches ? e.touches[0] : e;
+  updateFromPointer(p.clientX, p.clientY);
+}
+function moveDrag(e) {
+  if (!dragging) return;
+  const p = e.touches ? e.touches[0] : e;
+  updateFromPointer(p.clientX, p.clientY);
+  e.preventDefault();
+}
+function endDrag() {
+  if (!dragging) return;
+  dragging = false;
+  resetKnob();
+}
+
+joyPad.addEventListener('mousedown', startDrag);
+window.addEventListener('mousemove', moveDrag);
+window.addEventListener('mouseup', endDrag);
+joyPad.addEventListener('touchstart', startDrag, { passive: true });
+window.addEventListener('touchmove', moveDrag, { passive: false });
+window.addEventListener('touchend', endDrag);
+
+// ---------------- Control mode: Arrows (default) vs Joystick ----------------
+const modeBtn = document.getElementById('mode_btn');
+const speedSliderWrap = document.getElementById('speed_slider_wrap');
+let controlMode = 'arrows';
+let activeArrow = null;    // 'up' | 'down' | 'left' | 'right' | null
+let activeArrowEl = null;
+
+function applyControlModeUI() {
+  modeBtn.textContent = 'Control: ' + (controlMode === 'arrows' ? 'Arrows' : 'Joystick');
+  joyPad.style.display = controlMode === 'joystick' ? 'block' : 'none';
+  arrowPad.style.display = controlMode === 'arrows' ? 'grid' : 'none';
+  speedSliderWrap.classList.toggle('visible', controlMode === 'arrows');
+  // switching modes always stops the robot rather than leaving a stale command applied
+  vx = 0; vy = 0; wz = 0;
+  activeArrow = null;
+  if (controlMode === 'joystick') setKnob(0, 0);
+  updateReadout();
+  socket.emit('cmd_vel', { linear: 0, strafe: 0, angular: 0 });
+}
+applyControlModeUI();
+
+modeBtn.addEventListener('click', () => {
+  controlMode = controlMode === 'arrows' ? 'joystick' : 'arrows';
+  applyControlModeUI();
+});
+
+// ---------------- Speed slider (arrow mode only) ----------------
+const speedSlider = document.getElementById('speed_slider');
+const speedLabel = document.getElementById('speed_label');
+let speedScale = parseFloat(speedSlider.value) / 100;
+
+speedSlider.addEventListener('input', () => {
+  speedScale = parseFloat(speedSlider.value) / 100;
+  speedLabel.textContent = 'Speed: ' + speedSlider.value + '%';
+});
+
+// ---------------- Arrow (D-pad) buttons ----------------
+const arrowUp = document.getElementById('arrow_up');
+const arrowDown = document.getElementById('arrow_down');
+const arrowLeft = document.getElementById('arrow_left');
+const arrowRight = document.getElementById('arrow_right');
+const arrowUpLeft = document.getElementById('arrow_up_left');
+const arrowUpRight = document.getElementById('arrow_up_right');
+const arrowDownLeft = document.getElementById('arrow_down_left');
+const arrowDownRight = document.getElementById('arrow_down_right');
+
+// Recomputed every tick (not just on press) so changing the speed slider or
+// toggling holonomic mode mid-hold takes effect immediately.
+function computeArrowVelocity(direction) {
+  let x = 0, y = 0, w = 0;
+  const diag = (MAX_LINEAR * speedScale) / Math.SQRT2;  // normalize so diagonal speed matches axis speed
+  switch (direction) {
+    case 'up':    x = MAX_LINEAR * speedScale; break;
+    case 'down':  x = -MAX_LINEAR * speedScale; break;
+    case 'left':
+      if (holonomic) { y = MAX_LINEAR * speedScale; } else { w = MAX_ANGULAR * speedScale; }
+      break;
+    case 'right':
+      if (holonomic) { y = -MAX_LINEAR * speedScale; } else { w = -MAX_ANGULAR * speedScale; }
+      break;
+    // diagonals only make sense (and are only visible) in holonomic mode
+    case 'up-left':     x = diag;  y = diag;  break;
+    case 'up-right':    x = diag;  y = -diag; break;
+    case 'down-left':   x = -diag; y = diag;  break;
+    case 'down-right':  x = -diag; y = -diag; break;
+  }
+  return [x, y, w];
+}
+
+function bindHoldButton(el, direction) {
+  const press = (e) => {
+    activeArrow = direction;
+    activeArrowEl = el;
+    el.classList.add('pressed');
+    [vx, vy, wz] = computeArrowVelocity(direction);
+    updateReadout();
+    e.preventDefault();
+  };
+  const release = () => {
+    if (activeArrowEl !== el) return;
+    activeArrow = null;
+    activeArrowEl = null;
+    el.classList.remove('pressed');
+    vx = 0; vy = 0; wz = 0;
+    updateReadout();
+    socket.emit('cmd_vel', { linear: 0, strafe: 0, angular: 0 });
+  };
+  el.addEventListener('mousedown', press);
+  el.addEventListener('mouseup', release);
+  el.addEventListener('mouseleave', release);
+  el.addEventListener('touchstart', press, { passive: false });
+  el.addEventListener('touchend', release);
+  el.addEventListener('touchcancel', release);
+}
+
+bindHoldButton(arrowUp, 'up');
+bindHoldButton(arrowDown, 'down');
+bindHoldButton(arrowLeft, 'left');
+bindHoldButton(arrowRight, 'right');
+bindHoldButton(arrowUpLeft, 'up-left');
+bindHoldButton(arrowUpRight, 'up-right');
+bindHoldButton(arrowDownLeft, 'down-left');
+bindHoldButton(arrowDownRight, 'down-right');
+
+// rotation slider — only active/visible in holonomic mode
+rotateSlider.addEventListener('input', () => {
+  // NOTE: positive angular.z = turn LEFT (CCW). Dragging the slider right
+  // should turn the robot right, so this must be negated.
+  wz = -(parseFloat(rotateSlider.value) / 100) * MAX_ANGULAR;
+  updateReadout();
+});
+rotateSlider.addEventListener('change', () => {
+  // snap back to zero rotation on release, like the joystick does
+  rotateSlider.value = 0;
+  wz = 0;
+  updateReadout();
+});
+
+setInterval(() => {
+  if (dragging) {
+    socket.emit('cmd_vel', { linear: vx, strafe: vy, angular: wz });
+  } else if (activeArrow) {
+    [vx, vy, wz] = computeArrowVelocity(activeArrow);
+    updateReadout();
+    socket.emit('cmd_vel', { linear: vx, strafe: vy, angular: wz });
+  } else if (holonomic && wz !== 0) {
+    socket.emit('cmd_vel', { linear: vx, strafe: vy, angular: wz });
+  }
+}, 1000 / SEND_HZ);
+</script>
+</body>
+</html>

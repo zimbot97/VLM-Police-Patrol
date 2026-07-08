@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>suspect_matcher</name>
+  <version>0.1.0</version>
+  <description>
+    Suspect appearance-matching node for RDK X5. Compares two person-crop
+    images (e.g. a reference "suspect" photo vs. a candidate frame cropped by
+    an upstream YOLO-World detector) by querying the hobot_llamacpp VLM node
+    for structured visible attributes (clothing color/type, hairstyle) on
+    each image, then comparing those attributes to produce a yes/no match.
+    This is surface-feature triage only, NOT face recognition or confirmed
+    identity.
+  </description>
+  <maintainer email="brian@example.com">Brian</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>ai_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

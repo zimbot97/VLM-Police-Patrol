@@ -1,0 +1,3 @@
+[submodule "pico_firware/mecanum_base/libmicroros"]
+	path = pico_firware/mecanum_base/libmicroros
+	url = https://github.com/micro-ROS/micro_ros_raspberrypi_pico_sdk.git
