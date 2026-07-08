@@ -44,6 +44,7 @@ target_link_libraries(mecanum_base
     hardware_pwm
     hardware_gpio
     hardware_irq
+    hardware_i2c      # MPU9250 IMU on I2C1 (GP26/GP27)
     microros          # micro-ROS client library + Pico USB transport
 )
 

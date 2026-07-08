@@ -7,6 +7,7 @@
  *   Subscribe: /cmd_vel        geometry_msgs/Twist
  *   Publish:   /odom           nav_msgs/Odometry          @ 20 Hz
  *              /wheel_speeds   std_msgs/Float32MultiArray  @ 20 Hz  [FL,RL,RR,FR rad/s]
+ *              /imu/data_raw   sensor_msgs/Imu             @ 50 Hz  (MPU9250 accel + gyro)
  *
  * LED GP25:  fast blink = waiting for agent  |  solid = connected
  *
@@ -16,6 +17,7 @@
  *   RR(C): PWM=GP8,  IN1=GP10, IN2=GP9,  ENC_A=GP20, ENC_B=GP19
  *   FR(D): PWM=GP11, IN1=GP12, IN2=GP13, ENC_A=GP22, ENC_B=GP21
  *   STBY  → GP14  (HIGH enables both TB6612 chips)
+ *   MPU9250 on I2C1: SDA=GP26, SCL=GP27  (AD0 low → addr 0x68)
  *
  * Tune before running:
  *   WHEEL_R  — wheel radius in metres
@@ -32,6 +34,7 @@
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "hardware/irq.h"
+#include "hardware/i2c.h"
 #include "pico/time.h"
 
 #include <rcl/rcl.h>
@@ -44,6 +47,7 @@
 #include <geometry_msgs/msg/twist.h>
 #include <nav_msgs/msg/odometry.h>
 #include <std_msgs/msg/float32_multi_array.h>
+#include <sensor_msgs/msg/imu.h>
 
 // USB serial transport provided by libmicroros (micro_ros_raspberrypi_pico_sdk)
 extern "C" {
@@ -82,6 +86,40 @@ static constexpr float ENC_CPR   = 1560.0f;  // 13 pulses/rev × 4× quadrature 
 static constexpr float MAX_W     = 20.0f;    // max wheel angular speed [rad/s]
 static constexpr float WD_SECS   = 0.5f;     // cmd_vel watchdog timeout [s]
 
+// ─── MPU9250 IMU (I2C1) ───────────────────────────────────────────────────────
+static constexpr uint    I2C_SDA_PIN  = 26u;
+static constexpr uint    I2C_SCL_PIN  = 27u;
+static i2c_inst_t *const IMU_I2C      = i2c1;         // GP26/GP27 belong to I2C1
+static constexpr uint    IMU_I2C_BAUD = 400u * 1000u; // 400 kHz fast mode
+static constexpr uint8_t IMU_ADDR     = 0x68;         // AD0 low
+
+// Register map
+static constexpr uint8_t MPU_PWR_MGMT_1   = 0x6B;
+static constexpr uint8_t MPU_WHO_AM_I     = 0x75;
+static constexpr uint8_t MPU_SMPLRT_DIV   = 0x19;
+static constexpr uint8_t MPU_CONFIG       = 0x1A;
+static constexpr uint8_t MPU_GYRO_CONFIG  = 0x1B;
+static constexpr uint8_t MPU_ACCEL_CONFIG = 0x1C;
+static constexpr uint8_t MPU_ACCEL_XOUT_H = 0x3B;
+
+// Full-scale conversion (±2 g accel, ±250 dps gyro)
+static constexpr float ACC_LSB_PER_G   = 16384.0f;
+static constexpr float GYR_LSB_PER_DPS = 131.0f;
+static constexpr float G_TO_MS2        = 9.80665f;
+static constexpr float DEG_TO_RAD      = (float)M_PI / 180.0f;
+
+// Zero-rate / bias offsets — subtracted from converted readings.
+// Gyro:  measured [rad/s] with the robot held still.
+// Accel: measured [m/s^2] bias (leave Z's gravity component in place).
+static constexpr float IMU_GYR_OFF_X = 0.0f;
+static constexpr float IMU_GYR_OFF_Y = 0.0f;
+static constexpr float IMU_GYR_OFF_Z = 0.0f;
+static constexpr float IMU_ACC_OFF_X = 0.0f;
+static constexpr float IMU_ACC_OFF_Y = 0.0f;
+static constexpr float IMU_ACC_OFF_Z = 0.0f;
+
+static bool imu_present = false;
+
 // ─── Encoder state (written by ISR) ──────────────────────────────────────────
 static volatile int32_t enc_count[4] = {};
 static volatile uint8_t enc_state[4] = {};
@@ -105,6 +143,77 @@ static void encoder_isr(uint gpio, uint32_t /*events*/)
         enc_count[m] += QEM[(prev << 2) | curr];
         break;
     }
+}
+
+// ─── MPU9250 helpers ──────────────────────────────────────────────────────────
+// Per-transfer timeout guards against a stuck bus hanging the whole firmware.
+static constexpr uint IMU_XFER_US = 2000;   // 2 ms per I2C transfer
+
+static void imu_write(uint8_t reg, uint8_t val)
+{
+    uint8_t buf[2] = { reg, val };
+    i2c_write_timeout_us(IMU_I2C, IMU_ADDR, buf, 2, false, IMU_XFER_US);
+}
+
+static bool imu_read(uint8_t reg, uint8_t *dst, size_t len)
+{
+    if (i2c_write_timeout_us(IMU_I2C, IMU_ADDR, &reg, 1, true, IMU_XFER_US) < 0) return false;
+    return i2c_read_timeout_us(IMU_I2C, IMU_ADDR, dst, len, false, IMU_XFER_US) == (int)len;
+}
+
+// Bring up the I2C peripheral + pins. Called once at boot.
+static void imu_bus_init()
+{
+    i2c_init(IMU_I2C, IMU_I2C_BAUD);
+    gpio_set_function(I2C_SDA_PIN, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL_PIN, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA_PIN);
+    gpio_pull_up(I2C_SCL_PIN);
+}
+
+// Probe + configure the sensor. Returns true if a MPU9250/MPU9255 responds.
+// Safe to call repeatedly — used to (re)detect an IMU powered after the Pico.
+static bool imu_init()
+{
+    uint8_t who = 0;
+    if (!imu_read(MPU_WHO_AM_I, &who, 1)) return false;
+    // 0x71 = MPU9250, 0x73 = MPU9255, 0x70 = common clone
+    if (who != 0x71 && who != 0x73 && who != 0x70) return false;
+
+    imu_write(MPU_PWR_MGMT_1, 0x80);   // device reset
+    sleep_ms(100);
+    imu_write(MPU_PWR_MGMT_1, 0x01);   // wake, clock = best available PLL
+    sleep_ms(10);
+    imu_write(MPU_CONFIG,       0x03); // DLPF ~41 Hz
+    imu_write(MPU_SMPLRT_DIV,   0x04); // 1 kHz / (1+4) = 200 Hz internal rate
+    imu_write(MPU_GYRO_CONFIG,  0x00); // ±250 dps
+    imu_write(MPU_ACCEL_CONFIG, 0x00); // ±2 g
+    sleep_ms(10);
+    return true;
+}
+
+// Reads accel [m/s^2] and gyro [rad/s], offsets applied. Returns false on bus error.
+static bool imu_read_scaled(float acc[3], float gyr[3])
+{
+    uint8_t raw[14];
+    if (!imu_read(MPU_ACCEL_XOUT_H, raw, sizeof(raw))) return false;
+
+    int16_t ax = (int16_t)((raw[0]  << 8) | raw[1]);
+    int16_t ay = (int16_t)((raw[2]  << 8) | raw[3]);
+    int16_t az = (int16_t)((raw[4]  << 8) | raw[5]);
+    // raw[6..7] = temperature (skipped)
+    int16_t gx = (int16_t)((raw[8]  << 8) | raw[9]);
+    int16_t gy = (int16_t)((raw[10] << 8) | raw[11]);
+    int16_t gz = (int16_t)((raw[12] << 8) | raw[13]);
+
+    acc[0] = (float)ax / ACC_LSB_PER_G * G_TO_MS2 - IMU_ACC_OFF_X;
+    acc[1] = (float)ay / ACC_LSB_PER_G * G_TO_MS2 - IMU_ACC_OFF_Y;
+    acc[2] = (float)az / ACC_LSB_PER_G * G_TO_MS2 - IMU_ACC_OFF_Z;
+
+    gyr[0] = (float)gx / GYR_LSB_PER_DPS * DEG_TO_RAD - IMU_GYR_OFF_X;
+    gyr[1] = (float)gy / GYR_LSB_PER_DPS * DEG_TO_RAD - IMU_GYR_OFF_Y;
+    gyr[2] = (float)gz / GYR_LSB_PER_DPS * DEG_TO_RAD - IMU_GYR_OFF_Z;
+    return true;
 }
 
 // ─── PWM / motor helpers ──────────────────────────────────────────────────────
@@ -185,14 +294,19 @@ static void hw_init()
         gpio_set_irq_enabled(
             mp.enc_b, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true);
     }
+
+    imu_bus_init();
+    imu_present = imu_init();   // first probe; retried on each connect if it fails
 }
 
 // ─── micro-ROS objects ────────────────────────────────────────────────────────
 static rcl_node_t         node;
 static rcl_publisher_t    odom_pub;
 static rcl_publisher_t    ws_pub;
+static rcl_publisher_t    imu_pub;
 static rcl_subscription_t cmd_vel_sub;
 static rcl_timer_t        odom_timer;
+static rcl_timer_t        imu_timer;
 static rclc_executor_t    executor;
 static rclc_support_t     support;
 static rcl_allocator_t    allocator;
@@ -202,10 +316,12 @@ static geometry_msgs__msg__Twist        cmd_vel_msg;
 static nav_msgs__msg__Odometry          odom_msg;
 static std_msgs__msg__Float32MultiArray ws_msg;
 static float ws_data[4] = {};
+static sensor_msgs__msg__Imu            imu_msg;
 
 // Static frame ID strings avoid heap allocation on the Pico.
 static char frame_odom[]  = "odom";
 static char frame_base[]  = "base_link";
+static char frame_imu[]   = "imu_link";
 
 // ─── Odometry state ───────────────────────────────────────────────────────────
 static double  odom_x     = 0.0;
@@ -281,6 +397,25 @@ static void odom_timer_callback(rcl_timer_t * /*timer*/, int64_t /*last_call_ns*
     RCSOFTCHECK(rcl_publish(&ws_pub,   &ws_msg,   NULL));
 }
 
+static void imu_timer_callback(rcl_timer_t * /*timer*/, int64_t /*last_call_ns*/)
+{
+    float acc[3], gyr[3];
+    if (!imu_read_scaled(acc, gyr)) return;   // skip on transient bus error
+
+    int64_t epoch_ms = rmw_uros_epoch_millis();
+    imu_msg.header.stamp.sec     = (int32_t)(epoch_ms / 1000);
+    imu_msg.header.stamp.nanosec = (uint32_t)((epoch_ms % 1000) * 1000000LL);
+
+    imu_msg.linear_acceleration.x = acc[0];
+    imu_msg.linear_acceleration.y = acc[1];
+    imu_msg.linear_acceleration.z = acc[2];
+    imu_msg.angular_velocity.x    = gyr[0];
+    imu_msg.angular_velocity.y    = gyr[1];
+    imu_msg.angular_velocity.z    = gyr[2];
+
+    RCSOFTCHECK(rcl_publish(&imu_pub, &imu_msg, NULL));
+}
+
 // ─── Entity lifecycle ─────────────────────────────────────────────────────────
 static bool create_entities()
 {
@@ -306,11 +441,28 @@ static bool create_entities()
     RCCHECK(rclc_timer_init_default(
         &odom_timer, &support, RCL_MS_TO_NS(50), odom_timer_callback));   // 20 Hz
 
-    // 2 handles: 1 subscriber + 1 timer
-    RCCHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
+    // Retry detection here so an IMU powered up after the Pico is picked up
+    // on the next agent connect (no reset needed).
+    if (!imu_present) imu_present = imu_init();
+
+    // IMU entities only when the sensor is present
+    if (imu_present) {
+        RCCHECK(rclc_publisher_init_default(
+            &imu_pub, &node,
+            ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+            "imu/data_raw"));
+        RCCHECK(rclc_timer_init_default(
+            &imu_timer, &support, RCL_MS_TO_NS(20), imu_timer_callback));  // 50 Hz
+    }
+
+    // handles: 1 subscriber + 1 odom timer (+ 1 imu timer if present)
+    const size_t n_handles = imu_present ? 3 : 2;
+    RCCHECK(rclc_executor_init(&executor, &support.context, n_handles, &allocator));
     RCCHECK(rclc_executor_add_subscription(
         &executor, &cmd_vel_sub, &cmd_vel_msg, cmd_vel_callback, ON_NEW_DATA));
     RCCHECK(rclc_executor_add_timer(&executor, &odom_timer));
+    if (imu_present)
+        RCCHECK(rclc_executor_add_timer(&executor, &imu_timer));
 
     rmw_uros_sync_session(1000);   // sync Pico clock with agent epoch
 
@@ -329,6 +481,10 @@ static void destroy_entities()
     rcl_timer_fini(&odom_timer);
     rcl_publisher_fini(&odom_pub, &node);
     rcl_publisher_fini(&ws_pub,   &node);
+    if (imu_present) {
+        rcl_timer_fini(&imu_timer);
+        rcl_publisher_fini(&imu_pub, &node);
+    }
     rcl_subscription_fini(&cmd_vel_sub, &node);
     rcl_node_fini(&node);
     rclc_support_fini(&support);
@@ -370,6 +526,23 @@ int main()
     ws_msg.data.data     = ws_data;
     ws_msg.data.size     = 4;
     ws_msg.data.capacity = 4;
+
+    // Init IMU message — static frame ID, orientation unknown (raw accel + gyro)
+    sensor_msgs__msg__Imu__init(&imu_msg);
+    imu_msg.header.frame_id.data     = frame_imu;
+    imu_msg.header.frame_id.size     = sizeof(frame_imu) - 1;
+    imu_msg.header.frame_id.capacity = sizeof(frame_imu);
+    // orientation_covariance[0] = -1 → "orientation not provided" (REP 145)
+    memset(imu_msg.orientation_covariance,         0, sizeof(imu_msg.orientation_covariance));
+    memset(imu_msg.angular_velocity_covariance,    0, sizeof(imu_msg.angular_velocity_covariance));
+    memset(imu_msg.linear_acceleration_covariance, 0, sizeof(imu_msg.linear_acceleration_covariance));
+    imu_msg.orientation_covariance[0]         = -1.0;
+    imu_msg.angular_velocity_covariance[0]    = 4e-4;   // ~gyro noise, diag
+    imu_msg.angular_velocity_covariance[4]    = 4e-4;
+    imu_msg.angular_velocity_covariance[8]    = 4e-4;
+    imu_msg.linear_acceleration_covariance[0] = 4e-2;   // ~accel noise, diag
+    imu_msg.linear_acceleration_covariance[4] = 4e-2;
+    imu_msg.linear_acceleration_covariance[8] = 4e-2;
 
     // ── Connection state machine ──────────────────────────────────────────────
     enum class State { WAITING, AVAILABLE, CONNECTED, DISCONNECTED };
