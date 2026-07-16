@@ -1,97 +1,91 @@
 # oled_status
 
-SSD1306 0.96" (128×64, I2C) status HUD for the **VLM-Police-Patrol** robot on the RDK X5.
+Drives a 0.96" SSD1306 OLED as a status HUD for the VLM-Police-Patrol robot, showing the robot's IP address, live system metrics, and an animated state icon.
 
-Top line shows the robot IP, the line below shows running status, and the main area
-animates by state. Everything is driven off topics that already exist in the workspace —
-no changes to `suspect_matcher` or `dashboard_flask` are required for the core behaviour.
+## Overview
 
-## States (priority high → low)
+`oled_status` is a single-node ROS 2 package that runs on the RDK X5 and renders a 128x64 monochrome status display over I2C. It subscribes to existing workspace topics (suspect match results, VLM prompt activity, capture state, and human detections) and derives a highest-priority state to animate, while continuously showing the current IP address and CPU/BPU telemetry. If `luma.oled`/Pillow or the panel are missing, it degrades gracefully to headless logging. It sits alongside the perception and matching nodes as the robot's on-device status indicator (see the workspace root [../../README.md](../../README.md)).
 
-| State | Trigger | Graphic |
-|---|---|---|
-| SUSPECT MATCH | `/suspect_feature_match` = `True` | police badge + flashing beacon dot (latched ~6 s) |
-| NO MATCH | `/suspect_feature_match` = `False` | blinking cross (latched ~6 s) |
-| ANALYZING… | `/prompt_text` seen (VLM in flight) | rotating spinner |
-| CAPTURING… | `/oled/state` = `"capturing"` (optional) | rotating spinner |
-| HUMAN DETECTED | `/yolo/detections` targets > 0, or `/human_present` = `True` | person icon |
-| MONITORING | default | CCTV lens animation |
+## Nodes / executables
 
-VLM loading is auto-detected from `/prompt_text` and cleared when the match Bool
-arrives or after `vlm_timeout_sec`. The distinct CAPTURING screen only appears if
-something publishes `"capturing"` to `/oled/state` (see optional hook below).
+| Executable | Source file | Role |
+| --- | --- | --- |
+| `oled_status` | [oled_status/oled_status_node.py](oled_status/oled_status_node.py) | ROS node `oled_status`; reads status topics + system sensors and renders the OLED HUD |
 
-## Subscriptions
-- `/suspect_feature_match` (std_msgs/Bool)
-- `/prompt_text` (std_msgs/String)
-- `/yolo/detections` (ai_msgs/PerceptionTargets) — optional, guarded import
-- `/human_present` (std_msgs/Bool) — fallback if ai_msgs unavailable
-- `/oled/state` (std_msgs/String) — optional override: `capturing` | `idle`
+## ROS interfaces
 
-## Parameters
-| Param | Default | Notes |
-|---|---|---|
-| `i2c_bus` | `5` | I2C5 on RDK X5 (pins 3/5) |
-| `i2c_address` | `0x3C` | some panels enumerate at `0x3D` |
-| `ip_interface` | `wlan0` | preferred iface; auto-falls back to others |
-| `fps` | `15.0` | render rate |
-| `enable_display` | `true` | set false to run headless (logs state only) |
-| `vlm_timeout_sec` | `900.0` | matches suspect_matcher launch arg |
-| `show_stats` | `true` | right-side CPU%/CPU°C/BPU°C column |
+### Parameters
 
-## Install & build
+| Name | Type | Default |
+| --- | --- | --- |
+| `i2c_bus` | int | `5` |
+| `i2c_address` | int | `0x3C` (60) |
+| `ip_interface` | str | `wlan0` |
+| `fps` | float | `15.0` |
+| `enable_display` | bool | `true` |
+| `vlm_timeout_sec` | float | `900.0` |
+| `show_stats` | bool | `true` (node-only; not exposed by the launch file) |
+
+### Subscribed topics
+
+| Topic | Type | Notes |
+| --- | --- | --- |
+| `/suspect_feature_match` | `std_msgs/Bool` | True -> MATCH badge, False -> NOMATCH cross (held 6 s) |
+| `/prompt_text` | `std_msgs/String` | Marks VLM analysis in flight -> ANALYZE spinner |
+| `/oled/state` | `std_msgs/String` | `"capturing"` -> CAPTURE spinner; `idle`/`clear`/`normal` clears state |
+| `/human_present` | `std_msgs/Bool` | True -> HUMAN icon (held 1.2 s) |
+| `/yolo/detections` | `ai_msgs/PerceptionTargets` | Only subscribed if `ai_msgs` is importable; counts `person` targets -> HUMAN |
+
+## Launch
+
+Launch file: [launch/oled_status.launch.py](launch/oled_status.launch.py). Arguments and defaults: `i2c_bus` (`5`), `i2c_address` (`60` = 0x3C), `ip_interface` (`wlan0`), `fps` (`15.0`), `enable_display` (`true`), `vlm_timeout_sec` (`900.0`).
+
 ```bash
-sudo pip3 install luma.oled          # pulls luma.core + Pillow
-i2cdetect -y -r 5                    # confirm 0x3C on bus 5
-
-cd ~/ros2_ws                         # your workspace root
-colcon build --merge-install --packages-select oled_status
-source install/setup.bash
-```
-
-## Run
-```bash
-# via launch (recommended)
 ros2 launch oled_status oled_status.launch.py ip_interface:=wlan0
-
-# or directly
-ros2 run oled_status oled_status --ros-args \
-  -p i2c_bus:=5 -p i2c_address:=0x3c -p ip_interface:=wlan0
 ```
 
-## Optional: distinct CAPTURING screen from the dashboard
-Add around the `/capture_crop` call in `flask_node.py`:
-```python
-# once, in __init__:
-self.oled_state_pub = self.create_publisher(String, '/oled/state', 10)
+The helper script [../../sh/oled.sh](../../sh/oled.sh) opens an xterm, sources ROS 2 Humble and the workspace, and runs exactly this launch command with `ip_interface:=wlan0`.
 
-# around the capture:
-self.oled_state_pub.publish(String(data='capturing'))
-# ... call /capture_crop ...
-self.oled_state_pub.publish(String(data='idle'))
-```
-Or from a shell for testing:
+## Hardware / display
+
+- SSD1306 0.96" OLED, 128x64, monochrome, over I2C (`i2c_bus=5` -> Linux bus 5 on the RDK X5, address `0x3C`).
+- Header: IP address (top row) plus a horizontal divider; when stats are off, a blinking live dot is drawn top-right.
+- Left zone: centered state label and an animated icon — CCTV lens (PATROL/default), person (HUMAN), spinner (ANALYZE/CAPTURE), police badge with flashing beacon (MATCH), blinking cross (NOMATCH).
+- Right stats column (when `show_stats`): CPU usage % and CPU temperature (`temp3_input`), plus BPU temperature (`temp2_input`), read from `/sys/class/hwmon`. CPU % is derived from `/proc/stat` deltas. BPU temp reads valid only while the BPU is running.
+
+## Dependencies
+
+- ROS: `rclpy`, `std_msgs`, and optionally `ai_msgs` (import is guarded; falls back to `/human_present` if absent).
+- Python (pip, not rosdep): `luma.oled` (pulls in `luma.core`) and `Pillow` (PIL) for panel access and drawing; `fcntl`/`socket`/`struct` (stdlib) for interface IP lookup.
+- Build/test tooling: `ament_python`, `ament_copyright`, `ament_flake8`, `ament_pep257`, `python3-pytest`.
+
+Install the panel driver with:
+
 ```bash
-ros2 topic pub -1 /oled/state std_msgs/String "{data: capturing}"
+sudo pip3 install luma.oled
 ```
 
-## System stats (right column)
+## Build & run
 
-When `show_stats:=true` the right side shows live **CPU usage**, **CPU temp**, and
-**BPU temp**, read on the RDK X5 from:
-
-```
-/proc/stat                              # CPU % (delta-based, sampled 1 Hz)
-/sys/class/hwmon/hwmon0/temp3_input     # CPU temp (millideg C)
-/sys/class/hwmon/hwmon0/temp2_input     # BPU temp (millideg C)
+```bash
+cd ~/ros2_ws
+colcon build --packages-select oled_status
+source install/setup.bash
+ros2 launch oled_status oled_status.launch.py ip_interface:=wlan0
 ```
 
-The BPU sensor only powers up while the BPU is running, so BPU temp shows `--`
-when idle and a value once InternVL/YOLO inference is active. The node auto-discovers
-the correct `hwmonN` dir (falls back to `hwmon0`). Disable the column with
-`show_stats:=false` to centre the icon full-width.
+## Files
 
-## Notes
-- Runs on a single-threaded executor; subscriptions update state, a timer renders.
-- If luma/Pillow or the panel are missing, the node logs state transitions and
-  keeps running (useful for dev-machine testing).
+```
+oled_status/
+├── package.xml                  # manifest, deps (rclpy, std_msgs, ai_msgs)
+├── setup.py                     # entry point: oled_status -> oled_status_node:main
+├── setup.cfg                    # install script dirs
+├── launch/
+│   └── oled_status.launch.py    # launches the node with I2C + network args
+├── oled_status/
+│   ├── __init__.py
+│   └── oled_status_node.py      # OledStatusNode: state machine + OLED rendering
+└── resource/
+    └── oled_status              # ament resource marker
+```

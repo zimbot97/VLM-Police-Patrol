@@ -184,7 +184,7 @@ Each step opens an `xterm` (`-hold`) so logs stay visible per component.
 | 4 | [`llamacpp.sh`](sh/llamacpp.sh) | `hobot_llamacpp` | VLM appearance-attribute extraction |
 | 5 | [`suspect_matcher.sh`](sh/suspect_matcher.sh) | `suspect_matcher compare.launch.py` | Reference vs. candidate attribute compare |
 | 6 | [`amcl.sh`](sh/amcl.sh) | `police_patrol_bot amcl.launch.py` | Map + AMCL localization |
-| 7 | [`suspect_localize.sh`](sh/suspect_localize.sh) | `suspect_matcher suspect_localizer` | Fuse match + depth → suspect map coordinate |
+| 7 | [`suspect_localize.sh`](sh/suspect_localize.sh) | `suspect_matcher suspect_localizer` | Freeze suspect map coordinate on match (AMCL pose, or depth centroid) |
 | 8 | [`flask.sh`](sh/flask.sh) | `dashboard_flask flask_node` | Web dashboard / teleop |
 | 9 | [`oled.sh`](sh/oled.sh) | `oled_status oled_status.launch.py` | On-board status + IP display |
 
@@ -195,7 +195,7 @@ Each step opens an `xterm` (`-hold`) so logs stay visible per component.
 - **YOLO** ([`yolo.sh`](sh/yolo.sh)): `camera_topic:=/camera/color/image_raw`, `keep_conf:=0.7`, `live_view:=true`.
 - **VLM** ([`llamacpp.sh`](sh/llamacpp.sh)): `feed_type:=1`, `model_type:=0`, `system_prompt:=config/system_prompt.txt`.
 - **Suspect matcher** ([`suspect_matcher.sh`](sh/suspect_matcher.sh)): `reference_image_path:=/tmp/reference_crop.jpg`, `candidate_image_path:=/tmp/candidate_crop.jpg`.
-- **Localizer** ([`suspect_localize.sh`](sh/suspect_localize.sh)): `cloud_buffer_size:=8`, `max_pair_dt_sec:=0.3`.
+- **Localizer** ([`suspect_localize.sh`](sh/suspect_localize.sh)): `location_source:=amcl_pose` (default; or `pointcloud` for depth-centroid), `min_valid_points:=20`, `tf_timeout_sec:=1.0`.
 - **Dashboard** ([`flask.sh`](sh/flask.sh)): `image_topic:=/yolo/image_annotated`, `map_topic:=/map`, `pose_topic:=/amcl_pose`, `cmd_vel_topic:=/cmd_vel`, `holonomic_mode_topic:=/holonomic_mode`.
 - **OLED** ([`oled.sh`](sh/oled.sh)): `ip_interface:=wlan0`.
 
@@ -261,11 +261,17 @@ causes the robot to **stop automatically** rather than run away.
   (`/imu/data_raw`, yaw-rate + accel, gravity removed). It publishes the
   `odom → base_footprint` TF and `/odometry/filtered`. Only velocities from odom are
   fused (not absolute pose) to avoid double-counting the Pico's own integration.
-- **Detection + depth (time pairing):** the `suspect_localizer` node pairs a person
-  detection with a depth reading, requiring the two to be within
-  `max_pair_dt_sec:=0.3 s` (buffering `cloud_buffer_size:=8` clouds), then projects the
-  match to a map coordinate. This timestamp gating is the sync approach for turning a
-  2D detection + depth into a localized suspect position.
+- **Detection → capture-time freeze:** the `suspect_localizer` node treats each
+  `/yolo/detections` message as a capture event and **freezes** the suspect location at
+  that instant (the VLM compare can take minutes, during which the robot/person may
+  move, so nothing is re-sampled afterwards). The frozen fix is emitted only when
+  `/suspect_feature_match` is `true`. Placement depends on `location_source`:
+  - `amcl_pose` (default) — the robot's own map-frame pose (`/amcl_pose`) at the capture
+    moment; cheapest, no depth/TF.
+  - `pointcloud` — the centroid of valid depth points inside the largest person bbox,
+    grabbed on demand from `/camera/depth_registered/points` (organized cloud, so the
+    pixel bbox maps directly to points), transformed to `map` via tf2 using the cloud's
+    own stamp. Guarded by `min_valid_points` and `tf_timeout_sec`.
 
 ---
 

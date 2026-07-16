@@ -191,9 +191,12 @@ against the real chassis before tuning odometry**:
 
 - YOLO input: 640×640 NV12; person confidence gate `keep_conf:=0.7` (raise to reduce
   false positives, lower to catch more candidates).
-- Detection + depth pairing for localization requires the two within
-  `max_pair_dt_sec:=0.3 s` (buffer `cloud_buffer_size:=8`). Widen `max_pair_dt_sec` if
-  valid detections fail to localize; tighten it if stale depth causes bad coordinates.
+- **Suspect localization** (`suspect_localizer`) freezes a fix at each capture event and
+  emits it on match. `location_source:=amcl_pose` (default) uses the robot's `/amcl_pose`
+  — no calibration needed. `location_source:=pointcloud` uses the depth centroid inside
+  the person bbox: needs a valid camera→map TF chain and `min_valid_points` (default 20)
+  finite points in the box; raise `cloud_wait_sec` if the on-demand depth grab times out,
+  raise `tf_timeout_sec` if TF lookups at the capture stamp fail.
 
 ### 2.5 SLAM (slam_gmapping)
 

@@ -1,250 +1,230 @@
 # suspect_matcher
 
-ROS2 (Humble / TROS) package for **suspect appearance matching** on the RDK X5.
+Person detection, VLM appearance-matching, and map localization for the VLM-Police-Patrol robot (RDK X5).
 
-Two nodes:
+## Overview
 
-1. **`yoloworld_detect`** — loads the YOLO-World `.bin` model on the BPU
-   (open-vocabulary), subscribes to a camera topic, detects people, and saves
-   the largest person crop to disk (feeding node 3).
-2. **`yolo_detect`** — FASTER alternative to node 1. Uses a plain
-   closed-vocabulary Ultralytics YOLO detector (yolo11n/yolov8n) filtered to
-   COCO class 0 = person. Same interface/outputs as node 1; ~10x faster on the
-   X5 BPU because it skips YOLO-World's open-vocabulary overhead. Use this if
-   you only ever detect people.
-3. **`attribute_compare`** — compares two saved person-crop images by asking
-   the [`hobot_llamacpp`](https://github.com/D-Robotics/hobot_llamacpp) VLM to
-   extract clothing/hairstyle attributes from each, then comparing them.
+`suspect_matcher` detects people in the camera feed, captures a cropped image of the largest person on demand, and compares that crop against a reference "suspect" photo by asking the on-device `hobot_llamacpp` VLM to extract structured surface attributes (clothing color, clothing type, hairstyle) from each image and then comparing them. When a match is declared, a companion node freezes and reports the suspect's map-frame location. Detection runs on the RDK X5 BPU (a fast closed-vocabulary Ultralytics YOLO detector, or an open-vocabulary YOLO-World detector), while the VLM attribute reasoning runs through `hobot_llamacpp`. This is **surface-feature triage only — clothing/hairstyle/build matching, NOT face recognition or confirmed identity**; a "yes" means "worth a closer look", not proof.
 
-> **Scope / caveat:** this is surface-feature triage only — clothing, hair,
-> build. It is **not** face recognition or confirmed identity. Clothing and
-> hairstyle can coincidentally match between different people or change day to
-> day. Treat a "match" as "worth a human taking a closer look", not proof.
+## Nodes / executables
 
-## How it works
+| Executable | Node | Source file | Role |
+|---|---|---|---|
+| `yolo_detect` | `yolo_detect_node` | [suspect_matcher/yolo_detect_node.py](suspect_matcher/yolo_detect_node.py) | Fast closed-vocab YOLO person detector on BPU; crop-on-demand capture |
+| `yoloworld_detect` | `yoloworld_detect_node` | [suspect_matcher/yoloworld_detect_node.py](suspect_matcher/yoloworld_detect_node.py) | Open-vocabulary YOLO-World detector on BPU; crop-on-demand capture |
+| `attribute_compare` | `attribute_compare_from_files_node` | [suspect_matcher/attribute_compare_from_files_node.py](suspect_matcher/attribute_compare_from_files_node.py) | VLM attribute extraction + comparison of two image files via `hobot_llamacpp` |
+| `suspect_localizer` | `suspect_localizer_node` | [suspect_matcher/suspect_localizer_node.py](suspect_matcher/suspect_localizer_node.py) | Fuses detection bbox + amcl pose or depth cloud into a map-frame suspect location |
 
-1. You trigger the `/compare_images` service.
-2. The node reads the two image files from disk (paths are node parameters).
-3. It queries `hobot_llamacpp` once per image for a 3-line attribute report,
-   waiting for the single `ai_msgs/PerceptionTargets` message that
-   `hobot_llamacpp` publishes per finished response (the generated text is in
-   `targets[0].type`).
-4. It compares the two attribute sets with simple token overlap.
-5. It publishes the result.
+## Node details
 
-### Outputs
+### yolo_detect (`yolo_detect_node`)
 
-- **Service response** (`std_srvs/Trigger`): `success` = did the pipeline run
-  without error (files read, model responded, attributes parsed). It does
-  **not** mean "matched". `message` = the summary, or the error reason.
-- **`/suspect_feature_match`** (`std_msgs/Bool`): the actual yes/no match.
-  Published only on a successful run. This is where you read match true/false.
-- **`/suspect_feature_match_detail`** (`std_msgs/String`): human-readable
-  per-field breakdown.
+Wraps the `rdk_model_zoo` `UltralyticsYOLODetect` wrapper. Caches the latest camera frame; on `/capture_crop` it runs inference on that frame, keeps the largest box of the target class, and saves a padded crop to `<save_dir>/<save_basename>_crop.jpg`. With `live_view:=true` it also runs (throttled) inference on every frame and publishes an annotated image.
 
-| Outcome | service `success` | `/suspect_feature_match` |
+Parameters:
+
+| Name | Type | Default |
 |---|---|---|
-| Match | `True` | `true` |
-| No match | `True` | `false` |
-| Model gave no parseable attributes | `False` | (nothing) |
-| Bad file path / params unset | `False` | (nothing) |
+| `model_path` | string | `/home/sunrise/rdk_model_zoo/samples/vision/ultralytics_yolo/model/yolo11n_detect_bayese_640x640_nv12.bin` |
+| `sample_runtime_dir` | string | `<sample_root>/runtime/python` |
+| `repo_root` | string | `/home/sunrise/rdk_model_zoo` |
+| `camera_topic` | string | `/camera/color/image_raw` |
+| `save_dir` | string | `/tmp` |
+| `save_basename` | string | `candidate` |
+| `target_class_id` | int | `0` (COCO person) |
+| `class_label` | string | `person` |
+| `classes_num` | int | `80` |
+| `score_thres` | double | `0.25` |
+| `nms_thres` | double | `0.70` |
+| `reg` | int | `16` |
+| `resize_type` | int | `1` (letterbox) |
+| `strides` | int[] | `[8, 16, 32]` |
+| `keep_conf` | double | `0.25` |
+| `bpu_cores` | int[] | `[0]` |
+| `priority` | int | `0` |
+| `crop_padding_frac` | double | `0.1` |
+| `detections_topic` | string | `/yolo/detections` |
+| `live_view` | bool | `False` |
+| `annotated_topic` | string | `/yolo/image_annotated` |
+| `view_max_fps` | double | `10.0` |
 
-## Build
+- **Subscribed:** `camera_topic` (`sensor_msgs/Image`)
+- **Published:** `detections_topic` (`ai_msgs/PerceptionTargets`), `annotated_topic` (`sensor_msgs/Image`)
+- **Services:** `capture_crop` (server, `std_srvs/Trigger`)
 
-Place this package in your workspace `src/`, then:
+### yoloworld_detect (`yoloworld_detect_node`)
+
+Same crop-on-demand / live-view behavior as `yolo_detect`, but wraps the `rdk_model_zoo` `YOLOWorldDetect` open-vocabulary wrapper (text-prompt detection via an offline vocabulary embedding file). Detects whatever the `prompt` param names (default `person`).
+
+Parameters:
+
+| Name | Type | Default |
+|---|---|---|
+| `model_path` | string | `/home/sunrise/rdk_model_zoo/samples/vision/yoloworld/model/yolo_world.bin` |
+| `vocab_file` | string | `<sample_root>/test_data/offline_vocabulary_embeddings.json` |
+| `sample_runtime_dir` | string | `<sample_root>/runtime/python` |
+| `repo_root` | string | `/home/sunrise/rdk_model_zoo` |
+| `camera_topic` | string | `/camera/color/image_raw` |
+| `save_dir` | string | `/tmp` |
+| `save_basename` | string | `candidate` |
+| `prompt` | string | `person` |
+| `score_thres` | double | `0.05` |
+| `nms_thres` | double | `0.45` |
+| `keep_conf` | double | `0.25` |
+| `bpu_cores` | int[] | `[0]` |
+| `priority` | int | `0` |
+| `crop_padding_frac` | double | `0.1` |
+| `detections_topic` | string | `/yoloworld/detections` |
+| `live_view` | bool | `False` |
+| `annotated_topic` | string | `/yoloworld/image_annotated` |
+| `view_max_fps` | double | `5.0` |
+
+- **Subscribed:** `camera_topic` (`sensor_msgs/Image`)
+- **Published:** `detections_topic` (`ai_msgs/PerceptionTargets`), `annotated_topic` (`sensor_msgs/Image`)
+- **Services:** `capture_crop` (server, `std_srvs/Trigger`)
+
+### attribute_compare (`attribute_compare_from_files_node`)
+
+Runs no detection itself. On `/compare_images` it reads two image files fresh from disk, queries `hobot_llamacpp` for structured attributes on each (sequentially — the VLM handles one image+prompt per cycle), parses `clothing_color` / `clothing_type` / `hairstyle`, and compares by normalized token overlap. A match requires at least 2 of 3 fields to overlap (`MIN_FIELD_MATCHES = 2`). The VLM prompt is published as text and the image as an `Image`; completion is detected deterministically from the single `PerceptionTargets` the VLM emits per response (generated text in `targets[0].type`).
+
+Service response semantics: `success` = the pipeline ran without error (not the match result); the boolean match is published separately on `result_topic`.
+
+Parameters:
+
+| Name | Type | Default |
+|---|---|---|
+| `reference_image_path` | string | `""` |
+| `candidate_image_path` | string | `""` |
+| `hobot_image_topic` | string | `/image` |
+| `hobot_prompt_topic` | string | `/prompt_text` |
+| `hobot_result_topic` | string | `/llama_cpp_node` |
+| `result_topic` | string | `/suspect_feature_match` |
+| `detail_topic` | string | `/suspect_feature_match_detail` |
+| `response_timeout_sec` | double | `900.0` (high to cover cold model load, 5–11 min for InternVL2_5-1B) |
+
+- **Subscribed:** `hobot_result_topic` (`ai_msgs/PerceptionTargets`)
+- **Published:** `hobot_image_topic` (`sensor_msgs/Image`), `hobot_prompt_topic` (`std_msgs/String`), `result_topic` (`std_msgs/Bool`), `detail_topic` (`std_msgs/String`)
+- **Services:** `compare_images` (server, `std_srvs/Trigger`)
+
+### suspect_localizer (`suspect_localizer_node`)
+
+Consumes the detector's published topics (it does not depend on their internals). Treats each `detections_topic` message as a capture event, takes the largest person box, and freezes a map-frame fix. Two placement modes via `location_source`:
+
+- **`amcl_pose`** (default): places the suspect at the robot's own `/amcl_pose` map position (cheap; no cloud/tf).
+- **`pointcloud`**: subscribes to the depth cloud on demand, averages valid (finite) XYZ points inside the bbox from the organized cloud to get a camera-frame centroid, then transforms it to `target_frame` with tf2 (using the cloud stamp, falling back to latest).
+
+The frozen fix is emitted only when `match_topic` goes true (the fix is consumed per match). Output is a JSON file, a latched RViz `Marker` sphere, and a latched `PoseStamped`.
+
+Parameters:
+
+| Name | Type | Default |
+|---|---|---|
+| `location_source` | string | `amcl_pose` (`amcl_pose` or `pointcloud`) |
+| `amcl_pose_topic` | string | `/amcl_pose` |
+| `detections_topic` | string | `/yolo/detections` |
+| `pointcloud_topic` | string | `/camera/depth_registered/points` |
+| `match_topic` | string | `/suspect_feature_match` |
+| `match_detail_topic` | string | `/suspect_feature_match_detail` |
+| `target_frame` | string | `map` |
+| `person_label` | string | `person` |
+| `marker_topic` | string | `/suspect_marker` |
+| `pose_topic` | string | `/suspect_pose` |
+| `output_json_path` | string | `/tmp/suspect_location.json` |
+| `marker_scale` | double | `0.3` |
+| `min_valid_points` | int | `20` |
+| `tf_timeout_sec` | double | `1.0` |
+| `cloud_wait_sec` | double | `2.0` |
+
+- **Subscribed:** `detections_topic` (`ai_msgs/PerceptionTargets`), `match_detail_topic` (`std_msgs/String`), `match_topic` (`std_msgs/Bool`), `amcl_pose_topic` (`geometry_msgs/PoseWithCovarianceStamped`, amcl_pose mode only), `pointcloud_topic` (`sensor_msgs/PointCloud2`, pointcloud mode, subscribed on demand)
+- **Published:** `marker_topic` (`visualization_msgs/Marker`, latched/transient-local), `pose_topic` (`geometry_msgs/PoseStamped`, latched)
+- **Services:** none
+- **Also writes:** `output_json_path` (JSON) on match
+
+## Launch files
+
+### [launch/compare.launch.py](launch/compare.launch.py)
+
+Starts **only** the `attribute_compare` node (not `hobot_llamacpp`, which must be launched separately). Launch arguments:
+
+| Arg | Default |
+|---|---|
+| `reference_image_path` | `/tmp/reference_crop.jpg` |
+| `candidate_image_path` | `/tmp/candidate_crop.jpg` |
+| `response_timeout_sec` | `900.0` |
+
+## Data flow
+
+detect (`yolo_detect` / `yoloworld_detect`) → on `/capture_crop`, save the largest person crop to disk and publish the bbox on `/yolo/detections` → `attribute_compare` reads the reference + candidate crops, queries the `hobot_llamacpp` VLM per image (`/prompt_text` + `/image`, reading completions from `/llama_cpp_node`), parses and compares attributes → publishes the match boolean on `/suspect_feature_match` and a breakdown on `/suspect_feature_match_detail` → `suspect_localizer` freezes a map-frame fix at the capture event and, on match=true, writes `/tmp/suspect_location.json` and publishes `/suspect_marker` and `/suspect_pose`. See the pipeline diagram in [../../docs/technical.md](../../docs/technical.md).
+
+## Dependencies
+
+From `package.xml`: `rclpy`, `sensor_msgs`, `std_msgs`, `std_srvs`, `ai_msgs`, `cv_bridge`, `python3-opencv`, `geometry_msgs`, `visualization_msgs`, `tf2_ros`, `python3-numpy`.
+
+Notable imports / runtime deps: `cv_bridge` + OpenCV (`cv2`), `numpy`, `ai_msgs/PerceptionTargets`, `tf2_ros` (Buffer/TransformListener). Detector nodes import the RDK `rdk_model_zoo` sample wrappers at runtime (`ultralytics_yolo_det.UltralyticsYOLODetect`, `yoloworld_det.YOLOWorldDetect`) from `sample_runtime_dir` / `repo_root`. The VLM is provided by the external `hobot_llamacpp` node (started separately).
+
+## Build & run
 
 ```bash
-cd ~/your_ws
-colcon build --merge-install --packages-select suspect_matcher
+cd ~/ros2_ws
+colcon build --packages-select suspect_matcher
 source install/setup.bash
 ```
 
-## Run
-
-### 0. YOLO-World detector — capture person crops
+Start the VLM (see [sh/llamacpp.sh](../../sh/llamacpp.sh)) — uses InternVL2_5-1B (`vit_model_int16_v2.bin` + `Qwen2.5-0.5B-Instruct-Q4_0.gguf`) with `feed_type:=1 model_type:=0` and `system_prompt:=config/system_prompt.txt`:
 
 ```bash
-ros2 run suspect_matcher yoloworld_detect --ros-args \
-  -p model_path:=/home/sunrise/rdk_model_zoo/samples/vision/yoloworld/model/yolo_world.bin \
-  -p vocab_file:=/home/sunrise/rdk_model_zoo/samples/vision/yoloworld/test_data/offline_vocabulary_embeddings.json \
-  -p camera_topic:=/camera/color/image_raw \
-  -p save_dir:=/tmp \
-  -p save_basename:=candidate
+ros2 run hobot_llamacpp hobot_llamacpp --ros-args \
+  -p feed_type:=1 -p model_type:=0 \
+  -p model_file_name:=/home/sunrise/models/internvl2_5_1b/vit_model_int16_v2.bin \
+  -p llm_model_name:=/home/sunrise/models/internvl2_5_1b/Qwen2.5-0.5B-Instruct-Q4_0.gguf \
+  -p system_prompt:="config/system_prompt.txt" --log-level warn
 ```
 
-This wraps the rdk_model_zoo sample's own `YOLOWorldDetect` class (from
-`yoloworld_det.py`), so preprocessing/decode/NMS are the sample's tested code,
-not a re-implementation. It's open-vocabulary: the node prompts the model with
-the word `person` (change via `-p prompt:=...`), so every returned box is that
-class — no COCO class-index mapping needed.
-
-It caches the latest camera frame and saves a crop only when you call its
-service. Each call runs detection on the most recent frame and writes the
-largest detected person to `<save_dir>/<save_basename>_crop.jpg` (overwriting):
-
-```bash
-ros2 service call /capture_crop std_srvs/srv/Trigger {}
-# response.message e.g. "saved largest 'person' (conf 0.82, 2 found) -> /tmp/candidate_crop.jpg"
-```
-
-To capture a reference image, change the basename first and call again:
-```bash
-ros2 param set /yoloworld_detect_node save_basename reference
-ros2 service call /capture_crop std_srvs/srv/Trigger {}
-```
-
-Service responses: `success=True` with the save path on success;
-`success=False` if no frame received yet, no person detected, or inference
-failed (message says which).
-
-#### Live annotated view (optional)
-
-By default the node just caches frames and only runs inference on
-`/capture_crop` (cheap). To watch bounding boxes in real time — useful when
-aiming the camera — enable `live_view`:
-
-```bash
-ros2 run suspect_matcher yoloworld_detect --ros-args \
-  -p camera_topic:=/camera/color/image_raw \
-  -p live_view:=true \
-  -p view_max_fps:=5.0
-```
-
-Then view the annotated stream:
-```bash
-ros2 run rqt_image_view rqt_image_view /yoloworld/image_annotated
-```
-(or point the hobot websocket display at `/yoloworld/image_annotated`).
-
-> **Cost note:** `live_view:=true` runs BPU inference on *every* frame (up to
-> `view_max_fps`, default 5), competing for the BPU and raising power/heat.
-> Leave it off for normal crop-on-demand use. Even with it off, each
-> `/capture_crop` still publishes one annotated snapshot to
-> `/yoloworld/image_annotated` so you can see what was captured.
-
-You can toggle it at runtime:
-```bash
-ros2 param set /yoloworld_detect_node live_view true
-```
-
-> **Import paths:** the node adds the sample's `runtime/python` dir (for
-> `yoloworld_det`) and the repo root (so the wrapper's own
-> `import utils.py_utils...` resolves) to `sys.path`. If your checkout isn't at
-> `/home/sunrise/rdk_model_zoo`, override `-p sample_runtime_dir:=...` and
-> `-p repo_root:=...` to match.
-
-Requires `bpu_infer_lib_x5` (used internally by the sample wrapper):
-```bash
-pip install bpu_infer_lib_x5 -i http://sdk.d-robotics.cc:8080/simple/ \
-  --trusted-host sdk.d-robotics.cc
-```
-
-### 0b. Faster alternative — plain YOLO person detector
-
-If you only ever detect people, `yolo_detect` is a drop-in, ~10x-faster
-replacement for `yoloworld_detect`. It uses a closed-vocabulary
-yolo11n/yolov8n model and keeps only COCO class 0 (person). Same
-`/capture_crop` service, same crop output, same optional `live_view`.
+Run the detector (see [sh/yolo.sh](../../sh/yolo.sh)):
 
 ```bash
 ros2 run suspect_matcher yolo_detect --ros-args \
   -p model_path:=/home/sunrise/rdk_model_zoo/samples/vision/ultralytics_yolo/model/yolo11n_detect_bayese_640x640_nv12.bin \
-  -p camera_topic:=/camera/color/image_raw \
-  -p save_basename:=candidate \
-  -p live_view:=true
+  -p camera_topic:=/camera/color/image_raw -p live_view:=true -p keep_conf:=0.7
+# capture a crop:
+ros2 service call /capture_crop std_srvs/srv/Trigger {}
 ```
 
-Download a detect model first if you don't have one:
-```bash
-cd ~/rdk_model_zoo/samples/vision/ultralytics_yolo/model
-wget -nc https://archive.d-robotics.cc/downloads/rdk_model_zoo/rdk_x5/ultralytics_YOLO/yolo11n_detect_bayese_640x640_nv12.bin
-```
-
-Use the **n** (nano) model for max speed. Its annotated stream is on
-`/yolo/image_annotated` and detections on `/yolo/detections` (distinct from
-the yoloworld topics, so either detector can run without collision). It filters
-to `target_class_id:=0` (person) by default.
-
-> **Reality check:** this speeds up detection, which was already the fast part.
-> A full capture→compare cycle is dominated by the VLM step, so this mainly
-> gives smoother live view and lower BPU load — not dramatically faster
-> comparisons.
-
-### 1. Start hobot_llamacpp (separately)
-
-`hobot_llamacpp` needs its `config/` directory (with the model files) in its
-working directory, so stage it first per its own README:
-
-```bash
-cp -r install/lib/hobot_llamacpp/config/ .
-ros2 run hobot_llamacpp hobot_llamacpp --ros-args \
-  -p feed_type:=1 -p model_type:=0 \
-  -p model_file_name:=vit_model_int16_v2.bin \
-  -p llm_model_name:=Qwen2.5-0.5B-Instruct-Q4_0.gguf \
-  -p system_prompt:="config/system_prompt.txt" \
-  --log-level warn
-```
-
-(A concise `system_prompt.txt` is included in this package under `config/`;
-copy it into hobot_llamacpp's `config/` if you want to use it, or point
-`-p system_prompt:=` at it directly.)
-
-### 2. Watch the match result
-
-```bash
-ros2 topic echo /suspect_feature_match
-```
-
-### 3. Launch this node
+Run the comparison (see [sh/suspect_matcher.sh](../../sh/suspect_matcher.sh)):
 
 ```bash
 ros2 launch suspect_matcher compare.launch.py \
   reference_image_path:=/tmp/reference_crop.jpg \
   candidate_image_path:=/tmp/candidate_crop.jpg
-```
-
-or run it directly:
-
-```bash
-ros2 run suspect_matcher attribute_compare --ros-args \
-  -p reference_image_path:=/tmp/reference_crop.jpg \
-  -p candidate_image_path:=/tmp/candidate_crop.jpg
-```
-
-### 4. Trigger a comparison
-
-```bash
+# trigger it:
 ros2 service call /compare_images std_srvs/srv/Trigger {}
+ros2 topic echo /suspect_feature_match
 ```
 
-The **first** call includes hobot_llamacpp's cold model load (observed
-5–11 minutes for InternVL2.5-1B on the X5) — it will block, that's expected.
-Subsequent calls are fast.
-
-To compare a new pair without restarting, update the parameter and call again:
+Run the localizer (see [sh/suspect_localize.sh](../../sh/suspect_localize.sh)):
 
 ```bash
-ros2 param set /attribute_compare_from_files_node candidate_image_path /tmp/new_crop.jpg
-ros2 service call /compare_images std_srvs/srv/Trigger {}
+ros2 run suspect_matcher suspect_localizer --ros-args \
+  -p location_source:=amcl_pose -p min_valid_points:=20 -p tf_timeout_sec:=1.0
+# depth mode instead: -p location_source:=pointcloud -p cloud_wait_sec:=2.0
 ```
 
-## Parameters
+## Files
 
-| Parameter | Default | Description |
-|---|---|---|
-| `reference_image_path` | `""` | Path to reference person-crop image. |
-| `candidate_image_path` | `""` | Path to candidate person-crop image. |
-| `hobot_image_topic` | `/image` | hobot_llamacpp image input topic. |
-| `hobot_prompt_topic` | `/prompt_text` | hobot_llamacpp prompt input topic. |
-| `hobot_result_topic` | `/llama_cpp_node` | hobot_llamacpp result topic (PerceptionTargets). |
-| `result_topic` | `/suspect_feature_match` | Bool match output. |
-| `detail_topic` | `/suspect_feature_match_detail` | String breakdown output. |
-| `response_timeout_sec` | `900.0` | Per-query timeout (high to cover cold load). |
+```
+suspect_matcher/
+├── setup.py                                          # entry points (4 executables)
+├── setup.cfg                                         # ament_python script dirs
+├── package.xml                                       # deps + metadata
+├── config/system_prompt.txt                          # VLM system prompt (concise attribute extraction)
+├── launch/compare.launch.py                          # launches attribute_compare only
+└── suspect_matcher/
+    ├── yolo_detect_node.py                            # fast closed-vocab YOLO detector + crop capture
+    ├── yoloworld_detect_node.py                       # open-vocab YOLO-World detector + crop capture
+    ├── attribute_compare_from_files_node.py           # VLM attribute extraction + comparison
+    └── suspect_localizer_node.py                      # amcl/pointcloud -> map-frame suspect fix
+```
 
-## Tuning match strictness
+---
 
-Edit `MIN_FIELD_MATCHES` at the top of
-`suspect_matcher/attribute_compare_from_files_node.py` (default 2 of 3 fields
-must agree). Raise to 3 for stricter matching. If the model uses different
-words for the same thing ("navy" vs "dark blue"), extend `normalize_tokens()`
-with a small synonym map rather than expecting the VLM to be consistent.
+See [../../README.md](../../README.md) for the full VLM-Police-Patrol robot and [../../docs/technical.md](../../docs/technical.md) for the system architecture and pipeline diagram.

@@ -1,86 +1,156 @@
 # dashboard_flask
 
-A single ROS2 node combining rclpy + Flask/SocketIO into one web dashboard:
+A Flask + Socket.IO web dashboard that runs as a single ROS 2 node, exposing the robot's camera stream, teleop joystick, and suspect-matching workflow in the browser.
 
-- **Camera** — MJPEG stream of `sensor_msgs/Image`
-- **Map** — `nav_msgs/OccupancyGrid` rendered live as a PNG
-- **AMCL pose** — `geometry_msgs/PoseWithCovarianceStamped`, pushed to the browser over WebSocket and drawn as a marker+heading arrow on top of the map
-- **cmd_vel joystick** — drag pad in the browser publishes `geometry_msgs/Twist`
+## Overview
+`dashboard_flask` is the operator-facing web interface for the [VLM-Police-Patrol](../../README.md) robot running on the RDK X5. It runs one ROS 2 node (`dashboard_flask_node`) that spins `rclpy` in a background thread while serving a Flask/Socket.IO app in the main thread. The page shows a live MJPEG camera feed, provides a `cmd_vel` teleop joystick (with holonomic-mode toggle), and drives the `suspect_matcher` pipeline (upload reference, capture candidate crop, run VLM comparison). It also subscribes to map/pose/scan/suspect-pose topics for an optional map overlay.
 
-## Install
+## Nodes / executables
 
-Drop this folder into your ROS2 workspace `src/`:
+| Executable | Source file | Role |
+|---|---|---|
+| `flask_node` | [dashboard_flask/flask_node.py](dashboard_flask/flask_node.py) | Runs the `dashboard_flask_node` ROS 2 node plus the Flask/Socket.IO web server. |
 
-```
-your_ws/
-  src/
-    dashboard_flask/
-      package.xml
-      setup.py
-      setup.cfg
-      resource/dashboard_flask
-      dashboard_flask/
-        __init__.py
-        flask_node.py
-        templates/index.html
-```
+Node name: `dashboard_flask_node`. Entry point: `flask_node = dashboard_flask.flask_node:main`.
 
-Python deps (on the machine that runs the Flask node — the RDK X5 or your dev box):
+## ROS interfaces
+
+### Parameters
+
+| Name | Type | Default |
+|---|---|---|
+| `image_topic` | string | `/camera/image_raw` |
+| `compressed_image_topic` | string | `/camera/image_raw/compressed` |
+| `use_compressed` | bool | `False` |
+| `map_topic` | string | `/map` |
+| `pose_topic` | string | `/amcl_pose` |
+| `scan_topic` | string | `/scan` |
+| `cmd_vel_topic` | string | `/cmd_vel` |
+| `holonomic_mode_topic` | string | `/holonomic_mode` |
+| `initialpose_topic` | string | `/initialpose` |
+| `jpeg_quality` | int | `70` |
+| `stream_max_width` | int | `0` (0 = no downscale) |
+| `stream_fps` | int | `15` |
+| `port` | int | `5000` |
+| `capture_crop_service` | string | `/capture_crop` |
+| `compare_service` | string | `/compare_images` |
+| `detector_node_name` | string | `/yolo_detect_node` |
+| `match_topic` | string | `/suspect_feature_match` |
+| `match_detail_topic` | string | `/suspect_feature_match_detail` |
+| `suspect_pose_topic` | string | `/suspect_pose` |
+| `reference_image_path` | string | `/tmp/reference_crop.jpg` |
+| `candidate_image_path` | string | `/tmp/candidate_crop.jpg` |
+| `candidate_basename` | string | `candidate` |
+
+### Subscribed topics
+
+| Topic (param) | Type | Notes |
+|---|---|---|
+| `image_topic` | `sensor_msgs/Image` | Only when `use_compressed=False`; re-encoded to JPEG (BEST_EFFORT). |
+| `compressed_image_topic` | `sensor_msgs/CompressedImage` | Only when `use_compressed=True`; relayed verbatim (BEST_EFFORT). |
+| `map_topic` | `nav_msgs/OccupancyGrid` | RELIABLE / TRANSIENT_LOCAL. |
+| `pose_topic` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL pose. |
+| `scan_topic` | `sensor_msgs/LaserScan` | BEST_EFFORT, throttled to ~5 Hz. |
+| `match_topic` | `std_msgs/Bool` | Suspect match result. |
+| `match_detail_topic` | `std_msgs/String` | Match detail text. |
+| `suspect_pose_topic` | `geometry_msgs/PoseStamped` | Latched (TRANSIENT_LOCAL) map-frame suspect location. |
+
+### Published topics
+
+| Topic (param) | Type | Notes |
+|---|---|---|
+| `cmd_vel_topic` | `geometry_msgs/Twist` | Teleop; uses `linear.x`, `linear.y`, `angular.z`. |
+| `holonomic_mode_topic` | `std_msgs/Bool` | Drive-mode toggle. |
+| `initialpose_topic` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL initial pose estimate (frame `map`). |
+
+### Services (clients only)
+
+| Name (param) | Type | Role |
+|---|---|---|
+| `capture_crop_service` (`/capture_crop`) | `std_srvs/Trigger` | Client — triggers the detector to save the candidate crop. |
+| `compare_service` (`/compare_images`) | `std_srvs/Trigger` | Client — runs the VLM comparison (first call is a slow cold load). |
+| `<detector_node_name>/set_parameters` | `rcl_interfaces/SetParameters` | Client — sets the detector's `save_basename` param before capturing. |
+
+The node hosts no service servers.
+
+## Web interface
+
+### HTTP routes
+
+| Route | Method | Purpose |
+|---|---|---|
+| `/` | GET | Dashboard page (`index.html`). |
+| `/video_feed` | GET | MJPEG stream of the latest camera frame. |
+| `/map.png` | GET | Latest occupancy-grid map as PNG (204 if none). |
+| `/map_info` | GET | Map metadata (resolution, origin, width, height). |
+| `/pose` | GET | Latest robot pose `{x, y, yaw_deg}`. |
+| `/holonomic` | GET | Current drive mode `{enabled}`. |
+| `/suspect/upload_reference` | POST | Multipart `image` -> saved as the reference crop. |
+| `/suspect/capture_candidate` | POST | Sets detector basename + calls `/capture_crop`. |
+| `/suspect/compare` | POST | Calls `/compare_images` and returns cached match result. |
+| `/suspect/reference.jpg` | GET | Current reference crop (204 if none). |
+| `/suspect/candidate.jpg` | GET | Current candidate crop (204 if none). |
+| `/suspect/result` | GET | Latest cached `{match, detail}`. |
+| `/suspect/pose` | GET | Last known map-frame suspect location (null if none). |
+
+### Socket.IO events
+
+| Event | Direction | Payload / effect |
+|---|---|---|
+| `cmd_vel` | client -> server | `{linear, strafe, angular}` -> published to `cmd_vel`. |
+| `set_holonomic` | client -> server | `{enabled}` -> published to `holonomic_mode`; echoes `holonomic_state`. |
+| `set_initial_pose` | client -> server | `{x, y, yaw}` -> published to `initialpose`. |
+| `holonomic_state` | server -> client | `{enabled}` broadcast on mode change. |
+| `map_update` | server -> client | Map metadata on new map. |
+| `pose_update` | server -> client | Robot pose on new AMCL pose. |
+| `scan_update` | server -> client | `{points}` world-frame laser points (~5 Hz). |
+| `suspect_update` | server -> client | `{x, y}` suspect map location. |
+| `match_result` | server -> client | `{match}` from `match_topic`. |
+| `match_detail` | server -> client | `{detail}` from `match_detail_topic`. |
+
+## Dependencies
+
+From `package.xml`: `rclpy`, `ament_index_python`, `std_msgs`, `std_srvs`, `rcl_interfaces`, `sensor_msgs`, `nav_msgs`, `geometry_msgs`, `cv_bridge`, `python3-opencv`.
+
+Notable Python imports: `flask`, `flask_socketio` (declared in `setup.py` `install_requires`), `cv2`, `numpy`. The Socket.IO client is vendored at `dashboard_flask/static/socket.io.min.js` for offline use.
+
+## Build & run
 
 ```bash
-pip install flask flask-socketio
-```
-
-(`rclpy`, `cv_bridge`, `sensor_msgs`, `nav_msgs`, `geometry_msgs` come from your ROS2 install — make sure you've sourced it before building.)
-
-Build:
-
-```bash
-cd your_ws
-colcon build --packages-select dashboard_flask --symlink-install
+cd /home/brian/VLM-Police-Patrol
+colcon build --packages-select dashboard_flask --merge-install
 source install/setup.bash
 ```
 
-## Run
-
-Either directly:
+Run directly:
 
 ```bash
-ros2 run dashboard_flask flask_node
+ros2 run dashboard_flask flask_node --ros-args -p port:=5000
 ```
 
-Or with the included launch script, which sources ROS2 (+ TogetherROS on the X5, if present) and the workspace, then starts the node with topic/port overrides as flags:
+Convenience scripts at the package root:
 
-```bash
-chmod +x launch_dashboard.sh   # first time only
-./launch_dashboard.sh
-./launch_dashboard.sh --image-topic /rdk_camera/image_raw --port 8080
-./launch_dashboard.sh --help   # full list of flags
+- [`launch_dashboard.sh`](launch_dashboard.sh) — sources ROS 2 (+ optional TogetherROS on the RDK X5) and the workspace, then runs the node with defaults. Overridable via flags (`--image-topic`, `--map-topic`, `--pose-topic`, `--cmd-vel-topic`, `--holonomic-topic`, `--jpeg-quality`, `--port`) or matching env vars.
+- [`flask.sh`](flask.sh) — launches in an `xterm` on the RDK X5 with compressed-image streaming enabled (`use_compressed:=true`, `compressed_image_topic:=/camera/color/image_raw/compressed`).
+
+The dashboard is then served at `http://<host-ip>:<port>/` (default port 5000, bound to `0.0.0.0`).
+
+## Files
+
+```
+dashboard_flask/
+├── dashboard_flask/
+│   ├── __init__.py
+│   ├── flask_node.py            # ROS 2 node + Flask/Socket.IO app (all logic)
+│   ├── templates/index.html     # Dashboard UI (video, joystick, suspect tools, map overlay)
+│   └── static/socket.io.min.js  # Vendored Socket.IO client (offline)
+├── resource/dashboard_flask     # ament resource marker
+├── package.xml                  # Package manifest / dependencies
+├── setup.py                     # ament_python setup + entry point
+├── setup.cfg                    # console_scripts install dirs
+├── launch_dashboard.sh          # Env-sourcing launch helper
+├── flask.sh                     # RDK X5 xterm launch (compressed streaming)
+└── README.md                    # This file
 ```
 
-The script assumes it lives at `<ws>/src/dashboard_flask/launch_dashboard.sh` so it can find `install/setup.bash` two directories up. If you move it, pass `--ws-setup /path/to/install/setup.bash` explicitly. It also looks for `/opt/tros/humble/setup.bash` (RDK X5's TogetherROS layout) and sources it automatically if present — override with `--tros-setup` or the `TROS_SETUP` env var if your setup differs.
-
-Then open `http://<robot-ip>:5000/` (or whatever `--port` you chose) from your laptop/phone on the same network.
-
-## Remapping topics
-
-Defaults assume `/camera/image_raw`, `/map`, `/amcl_pose`, `/cmd_vel`. Override via ROS2 params, e.g.:
-
-```bash
-ros2 run dashboard_flask flask_node --ros-args \
-  -p image_topic:=/rdk_camera/image_raw \
-  -p map_topic:=/map \
-  -p pose_topic:=/amcl_pose \
-  -p cmd_vel_topic:=/cmd_vel \
-  -p jpeg_quality:=60
-```
-
-Or set them in a launch file / YAML params file the same way.
-
-## Notes / gotchas
-
-- **Map QoS**: Nav2's map topic is typically published `RELIABLE` + `TRANSIENT_LOCAL` (latched). The subscription QoS in `flask_node.py` matches this — if you swap in a different map source, check its QoS or you'll get nothing.
-- **cv_bridge encoding**: assumes `bgr8`. If your camera publishes `rgb8`, `mono8`, or a compressed topic, either remap to a raw `bgr8`-compatible topic or extend `on_image()` accordingly (compressed input is a small change: subscribe to `sensor_msgs/CompressedImage` and skip cv_bridge entirely, decoding the JPEG bytes with `cv2.imdecode` instead).
-- **Joystick send rate**: fixed at 10 Hz while dragging, and always sends one final zero-velocity command on release — no server-side deadman timeout is implemented, so if the browser tab crashes mid-drag the last nonzero cmd_vel keeps being the last thing published. Add a watchdog timer in the node (stop publishing / auto-zero after N ms without a socket event) before trusting this on a robot that can hurt something.
-- **Multiple clients**: `cmd_vel` from any connected browser tab is accepted — there's no arbitration. Fine for one-operator use; add a "control lock" concept if more than one person might open the page at once.
-- **Performance**: MJPEG loop is capped at ~20 fps server-side (`time.sleep(0.05)` in `mjpeg_generator`). Lower `jpeg_quality` or this interval if you're also running Nav2/YOLO/VLM on the same X5 and need to free up CPU.
+See the [root README](../../README.md) for how this package fits into the full VLM-Police-Patrol system.
