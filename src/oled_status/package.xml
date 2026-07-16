@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>oled_status</name>
+  <version>0.1.0</version>
+  <description>
+    SSD1306 0.96" (128x64, I2C bus 5) status HUD for the VLM-Police-Patrol robot.
+    Shows IP + running status and animates on human detection, VLM analysis,
+    and suspect match/no-match, driven entirely off existing workspace topics.
+  </description>
+  <maintainer email="brian@braintree.local">Brian</maintainer>
+  <license>MIT</license>
+
+  <!-- build / test tooling -->
+  <buildtool_depend>ament_python</buildtool_depend>
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <!-- runtime deps -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <!-- optional: only used if built; node guards the import -->
+  <exec_depend>ai_msgs</exec_depend>
+  <!-- panel driver (pip): luma.oled + Pillow. Not an apt/rosdep key, install via pip. -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

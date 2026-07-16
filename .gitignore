@@ -1,0 +1,12 @@
+# Editor / tooling
+.claude/
+.vscode/
+**/.vscode/
+
+# Third-party vendored dependency (re-clone/rebuild on device)
+pico_firware/mecanum_base/libmicroros/
+
+# Build artifacts / caches
+**/build/
+__pycache__/
+*.pyc

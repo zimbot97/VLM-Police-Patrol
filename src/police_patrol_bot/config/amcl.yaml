@@ -1,0 +1,34 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    global_frame_id: "map"
+    scan_topic: "scan"
+    # motion model — diff works fine even on your mecanum base for AMCL
+    robot_model_type: "nav2_amcl::OmniMotionModel"
+    min_particles: 500
+    max_particles: 2000
+    # laser
+    laser_model_type: "likelihood_field"
+    laser_max_range: 12.0
+    laser_min_range: -1.0
+    max_beams: 60
+    # odom noise (alphas) — tune to your drivetrain
+    alpha1: 0.05
+    alpha2: 0.05
+    alpha3: 0.05
+    alpha4: 0.05
+    alpha5: 0.05
+    # update thresholds
+    update_min_d: 0.25
+    update_min_a: 0.2
+    resample_interval: 1
+    transform_tolerance: 1.0
+    # set true so you don't have to click "2D Pose Estimate" every boot
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0

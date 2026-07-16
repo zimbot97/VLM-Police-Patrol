@@ -4,73 +4,121 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>ROS2 Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="/static/socket.io.min.js"></script>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --grn: #4ade80;
+    --grn-dim: rgba(74,222,128,0.55);
+    --grn-faint: rgba(74,222,128,0.14);
+    --line: #1f3322;
+    --bg: #070907;
+    --panel: rgba(8,12,9,0.82);
+    --txt: #d1e7d5;
+    --red: #f87171;
+  }
   * { box-sizing: border-box; }
   html, body {
-    margin: 0; padding: 0; background: #0e0f13; color: #e6e6e6;
-    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0; padding: 0; background: var(--bg); color: var(--txt);
+    font-family: 'Courier New', Courier, monospace;
     height: 100vh; height: 100dvh;
     overflow: hidden;
     overscroll-behavior: none;
   }
 
-  /* ---------- top bar / tabs ---------- */
+  /* ---------- top bar ---------- */
   .topbar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 14px; background: #14161a; border-bottom: 1px solid #23262e;
+    padding: 10px 14px; background: #0a0d0a; border-bottom: 1px solid var(--line);
   }
-  .topbar h1 { font-size: 15px; font-weight: 600; margin: 0; color: #9fd4ff; }
-  .status_dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #555; margin-right: 8px; }
-  .status_dot.live { background: #4cff88; }
+  .topbar h1 {
+    font-size: 13px; font-weight: 700; margin: 0; color: var(--grn);
+    letter-spacing: 0.18em; text-transform: uppercase;
+    text-shadow: 0 0 8px rgba(74,222,128,0.5);
+  }
+  .status_dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #333; margin-right: 8px; }
+  .status_dot.live { background: var(--grn); box-shadow: 0 0 8px var(--grn); }
 
   .tabs { display: flex; gap: 6px; }
   .tab_btn {
-    background: #1d2026; border: 1px solid #2a2e37; color: #b7bcc7;
-    padding: 8px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;
+    background: transparent; border: 1px solid var(--line); color: var(--grn);
+    padding: 8px 16px; border-radius: 2px; font-size: 11px; cursor: pointer;
+    font-family: inherit; letter-spacing: 0.12em; text-transform: uppercase;
+    font-weight: 700;
   }
-  .tab_btn.active { background: #2a5fd0; border-color: #2a5fd0; color: #fff; }
+  .tab_btn:hover { background: var(--grn-faint); border-color: var(--grn); }
+  #capture_btn { position: relative; }
+  #capture_badge {
+    display: none;
+    position: absolute; top: -5px; right: -5px;
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--red);
+    box-shadow: 0 0 8px rgba(248,113,113,0.8);
+    animation: badge_pulse 1.2s ease-in-out infinite;
+  }
+  #capture_badge.visible { display: block; }
+  @keyframes badge_pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.35); opacity: 0.7; }
+  }
 
-  .tab_page { display: none; height: calc(100vh - 49px); height: calc(100dvh - 49px); overflow: hidden; }
+  .tab_page { display: none; height: calc(100vh - 45px); height: calc(100dvh - 45px); overflow: hidden; }
   .tab_page.active { display: block; }
 
-  /* ---------- camera tab: full-bleed video with overlays ---------- */
+  /* ---------- camera stage: full-bleed video with HUD overlays ---------- */
   #camera_stage { position: relative; width: 100%; height: 100%; background: #000; overflow: hidden; }
   #video_feed { width: 100%; height: 100%; object-fit: contain; display: block; }
+  /* faint scanlines over the live feed */
+  #camera_stage::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, rgba(0,0,0,0.10) 0px, rgba(0,0,0,0.10) 1px,
+      transparent 1px, transparent 4px);
+  }
+  /* everything overlaid on the feed sits above the scanlines */
+  #camera_stage > * { z-index: 1; }
 
   .holo_btn {
     position: absolute; top: 14px; right: 14px;
-    background: rgba(29,32,38,0.85); border: 1px solid #3a3f4b; color: #e6e6e6;
-    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    background: var(--panel); border: 1px solid var(--line); color: var(--grn);
+    padding: 9px 16px; border-radius: 2px; font-size: 11px; font-weight: 700;
     cursor: pointer; backdrop-filter: blur(4px);
+    font-family: inherit; letter-spacing: 0.1em; text-transform: uppercase;
   }
-  .holo_btn.on { background: rgba(255,171,64,0.9); border-color: #ffab40; color: #241900; }
+  .holo_btn.on {
+    background: rgba(248,113,113,0.16); border-color: var(--red); color: var(--red);
+    text-shadow: 0 0 8px rgba(248,113,113,0.5);
+  }
 
   .mode_btn {
-    position: absolute; top: 62px; right: 14px;
-    background: rgba(29,32,38,0.85); border: 1px solid #3a3f4b; color: #e6e6e6;
-    padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+    position: absolute; top: 58px; right: 14px;
+    background: var(--panel); border: 1px solid var(--line); color: var(--grn);
+    padding: 9px 16px; border-radius: 2px; font-size: 11px; font-weight: 700;
     cursor: pointer; backdrop-filter: blur(4px);
+    font-family: inherit; letter-spacing: 0.1em; text-transform: uppercase;
   }
 
   #arrow_pad {
     position: absolute; bottom: 24px; left: 24px;
     width: 160px; height: 160px;
     display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
-    gap: 6px;
+    gap: 5px;
   }
   .arrow_btn {
-    background: rgba(18,20,26,0.65); border: 1px solid rgba(255,255,255,0.15);
-    border-radius: 10px; color: #e6e6e6; font-size: 18px; cursor: pointer;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 2px; color: var(--grn); font-size: 17px; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
     touch-action: none; user-select: none; backdrop-filter: blur(2px);
+    font-family: inherit;
   }
   .arrow_btn:active, .arrow_btn.pressed {
-    background: rgba(76,141,255,0.85); border-color: #4c8dff;
+    background: rgba(74,222,128,0.28); border-color: var(--grn);
+    box-shadow: 0 0 12px rgba(74,222,128,0.35);
   }
+  #arrow_pad.holo .arrow_btn { border-color: rgba(248,113,113,0.4); color: var(--red); }
   #arrow_pad.holo .arrow_btn:active, #arrow_pad.holo .arrow_btn.pressed {
-    background: rgba(255,171,64,0.9); border-color: #ffab40;
+    background: rgba(248,113,113,0.28); border-color: var(--red);
+    box-shadow: 0 0 12px rgba(248,113,113,0.35);
   }
   #arrow_up { grid-column: 2; grid-row: 1; }
   #arrow_left { grid-column: 1; grid-row: 2; }
@@ -81,76 +129,167 @@
   #arrow_down_left { grid-column: 1; grid-row: 3; }
   #arrow_down_right { grid-column: 3; grid-row: 3; }
 
-  .diag_btn { display: none; font-size: 15px; }
+  .diag_btn { display: none; font-size: 14px; }
   #arrow_pad.holo .diag_btn { display: flex; }
+
   #speed_slider_wrap {
     position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
-    display: none; flex-direction: column; align-items: center; gap: 6px;
-    background: rgba(20,22,26,0.75); border: 1px solid #2a2e37; border-radius: 10px;
+    display: none; flex-direction: column; align-items: center; gap: 5px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
     padding: 8px 16px; backdrop-filter: blur(4px);
   }
   #speed_slider_wrap.visible { display: flex; }
   #speed_slider_wrap label {
-    font-size: 11px; color: #b7bcc7; font-variant-numeric: tabular-nums;
+    font-size: 10px; color: var(--grn); letter-spacing: 0.12em; text-transform: uppercase;
   }
   #speed_slider {
     width: 160px; -webkit-appearance: none; height: 28px; background: transparent;
   }
   #speed_slider::-webkit-slider-runnable-track {
-    height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px;
+    height: 4px; background: var(--grn-faint); border: 1px solid var(--line);
   }
   #speed_slider::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%;
-    background: #4c8dff; margin-top: -8px; box-shadow: 0 0 10px rgba(76,141,255,0.6);
+    -webkit-appearance: none; width: 18px; height: 18px; border-radius: 0;
+    background: var(--grn); margin-top: -8px;
+    box-shadow: 0 0 10px rgba(74,222,128,0.6);
   }
 
   .vel_readout {
     position: absolute; top: 14px; left: 14px;
-    background: rgba(20,22,26,0.75); border: 1px solid #2a2e37; border-radius: 8px;
-    padding: 8px 12px; font-size: 12px; color: #b7bcc7; font-variant-numeric: tabular-nums;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    padding: 8px 12px; font-size: 10px; color: var(--grn);
+    letter-spacing: 0.08em; text-transform: uppercase;
     backdrop-filter: blur(4px);
   }
 
   #joystick_pad {
     position: absolute; bottom: 24px; left: 24px;
     width: 160px; height: 160px; border-radius: 50%;
-    background: rgba(18,20,26,0.55); border: 1px solid rgba(255,255,255,0.15);
+    background: var(--panel); border: 1px solid var(--grn-dim);
     touch-action: none; backdrop-filter: blur(2px);
+    box-shadow: inset 0 0 24px rgba(74,222,128,0.06);
   }
+  /* crosshair lines through the joystick pad */
+  #joystick_pad::before, #joystick_pad::after {
+    content: ''; position: absolute; background: var(--grn-faint); pointer-events: none;
+  }
+  #joystick_pad::before { left: 50%; top: 6%; bottom: 6%; width: 1px; }
+  #joystick_pad::after { top: 50%; left: 6%; right: 6%; height: 1px; }
   #joystick_knob {
-    width: 48px; height: 48px; border-radius: 50%; background: #4c8dff;
+    width: 46px; height: 46px; border-radius: 50%; background: var(--grn);
     position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    box-shadow: 0 0 14px rgba(76,141,255,0.6);
+    box-shadow: 0 0 16px rgba(74,222,128,0.6);
+    z-index: 1;
   }
-  #joystick_pad.holo #joystick_knob { background: #ffab40; box-shadow: 0 0 14px rgba(255,171,64,0.6); }
+  #joystick_pad.holo { border-color: rgba(248,113,113,0.5); }
+  #joystick_pad.holo #joystick_knob { background: var(--red); box-shadow: 0 0 16px rgba(248,113,113,0.6); }
 
   #rotate_slider_wrap {
-    position: absolute; bottom: 24px; right: 24px; width: 160px;
-    display: none; flex-direction: column; align-items: center; gap: 6px;
+    position: absolute; bottom: 24px; right: 24px; width: 170px;
+    display: none; flex-direction: column; align-items: center; gap: 5px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    padding: 8px 12px; backdrop-filter: blur(4px);
   }
   #rotate_slider_wrap.visible { display: flex; }
-  #rotate_slider_wrap label { font-size: 11px; color: #b7bcc7; }
+  #rotate_slider_wrap label {
+    font-size: 10px; color: var(--red); letter-spacing: 0.12em; text-transform: uppercase;
+  }
   #rotate_slider {
-    width: 160px; -webkit-appearance: none; height: 34px; background: transparent;
+    width: 150px; -webkit-appearance: none; height: 30px; background: transparent;
   }
   #rotate_slider::-webkit-slider-runnable-track {
-    height: 6px; background: rgba(255,255,255,0.2); border-radius: 3px;
+    height: 4px; background: rgba(248,113,113,0.14); border: 1px solid rgba(248,113,113,0.3);
   }
   #rotate_slider::-webkit-slider-thumb {
-    -webkit-appearance: none; width: 26px; height: 26px; border-radius: 50%;
-    background: #ffab40; margin-top: -10px; box-shadow: 0 0 10px rgba(255,171,64,0.6);
+    -webkit-appearance: none; width: 20px; height: 20px; border-radius: 0;
+    background: var(--red); margin-top: -9px;
+    box-shadow: 0 0 10px rgba(248,113,113,0.6);
   }
+
+  /* ---------- shared drive-control overlay (floats above both tabs) ---------- */
+  #control_overlay {
+    position: fixed; top: 45px; left: 0; right: 0; bottom: 0;
+    pointer-events: none;      /* empty areas pass through to map/camera below */
+    z-index: 50;
+  }
+  #control_overlay > * { pointer-events: auto; }
+
+  /* ---------- map tab: interactive pan/zoom canvas ---------- */
+  #map_stage {
+    position: relative; width: 100%; height: 100%;
+    background: #050705; overflow: hidden; touch-action: none;
+  }
+  #map_canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+  #map_canvas.panning { cursor: grabbing; }
+  #map_canvas.setpose { cursor: crosshair; }
+
+  #map_hud_left {
+    position: absolute; top: 56px; left: 14px;   /* below the shared vel readout */
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .map_hud_btn {
+    background: var(--panel); border: 1px solid var(--line); color: var(--grn);
+    padding: 9px 14px; border-radius: 2px; font-size: 11px; font-weight: 700;
+    cursor: pointer; backdrop-filter: blur(4px);
+    font-family: inherit; letter-spacing: 0.1em; text-transform: uppercase;
+    text-align: left;
+  }
+  .map_hud_btn.active {
+    background: rgba(74,222,128,0.18); border-color: var(--grn);
+    text-shadow: 0 0 8px rgba(74,222,128,0.5);
+  }
+
+  #map_pose_readout {
+    position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+    padding: 8px 12px; font-size: 10px; color: var(--grn);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    backdrop-filter: blur(4px); white-space: nowrap;
+  }
+  #setpose_hint {
+    display: none;
+    position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--grn); border-radius: 2px;
+    padding: 8px 14px; font-size: 10px; color: var(--grn);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    backdrop-filter: blur(4px); white-space: nowrap;
+  }
+  #setpose_hint.visible { display: block; }
+  #map_empty_msg {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    font-size: 11px; color: var(--grn); opacity: 0.6;
+    letter-spacing: 0.1em; text-transform: uppercase; text-align: center;
+  }
+  #map_empty_msg.hidden { display: none; }
+
+  /* translucent camera picture-in-picture over the map */
+  #map_cam_overlay {
+    display: none;
+    position: absolute; top: 56px; right: 14px;
+    width: 34%; max-width: 380px; min-width: 200px;
+    aspect-ratio: 4 / 3; object-fit: contain;
+    opacity: 0.55;
+    border: 1px solid var(--grn-dim); border-radius: 2px;
+    background: #000;
+    pointer-events: none;   /* map pan/zoom works right through it */
+    z-index: 5;
+    box-shadow: 0 0 20px rgba(0,0,0,0.6);
+  }
+  #map_cam_overlay.visible { display: block; }
 
   /* ---------- rotate-device overlay (small screens, portrait) ---------- */
   #rotate_overlay {
     display: none;
     position: fixed; inset: 0; z-index: 9999;
-    background: #0e0f13; color: #e6e6e6;
+    background: var(--bg); color: var(--grn);
     flex-direction: column; align-items: center; justify-content: center;
     gap: 14px; text-align: center; padding: 24px;
   }
   #rotate_overlay .icon { font-size: 48px; animation: rotate_hint 1.6s ease-in-out infinite; }
-  #rotate_overlay p { margin: 0; font-size: 15px; color: #b7bcc7; max-width: 260px; }
+  #rotate_overlay p {
+    margin: 0; font-size: 12px; color: var(--grn); opacity: 0.8; max-width: 280px;
+    letter-spacing: 0.08em; text-transform: uppercase; line-height: 1.6;
+  }
   @keyframes rotate_hint {
     0%, 100% { transform: rotate(0deg); }
     50% { transform: rotate(90deg); }
@@ -160,70 +299,269 @@
     #main_content { display: none; }
   }
 
-  /* ---------- suspect match modal ---------- */
+  /* ---------- suspect match modal: surveillance dossier style ---------- */
   #suspect_modal {
     display: none;
     position: fixed; inset: 0; z-index: 500;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0,0,0,0.82);
     align-items: center; justify-content: center;
-    padding: 20px;
+    padding: 16px;
   }
   #suspect_modal.visible { display: flex; }
+
+  #suspect_modal .modal_card {
+    position: relative;
+    background: #0a0d0a;
+    border: 1px solid #1f3322; border-radius: 4px;
+    width: 100%; max-width: 680px; max-height: 90vh; overflow-y: auto;
+    padding: 18px;
+    font-family: 'Courier New', Courier, monospace;
+    box-shadow: 0 0 40px rgba(74,222,128,0.08), inset 0 0 60px rgba(0,0,0,0.6);
+  }
+  /* CRT scanlines over the whole card */
+  #suspect_modal .modal_card::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px,
+      transparent 1px, transparent 3px);
+    border-radius: 4px;
+  }
+  /* corner brackets like a targeting HUD */
+  .hud_corner { position: absolute; width: 16px; height: 16px; pointer-events: none; }
+  .hud_corner.tl { top: 6px; left: 6px; border-top: 2px solid #4ade80; border-left: 2px solid #4ade80; }
+  .hud_corner.tr { top: 6px; right: 6px; border-top: 2px solid #4ade80; border-right: 2px solid #4ade80; }
+  .hud_corner.bl { bottom: 6px; left: 6px; border-bottom: 2px solid #4ade80; border-left: 2px solid #4ade80; }
+  .hud_corner.br { bottom: 6px; right: 6px; border-bottom: 2px solid #4ade80; border-right: 2px solid #4ade80; }
+
+  #suspect_modal .modal_head {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase; color: #4ade80;
+    border-bottom: 1px solid #1f3322; padding-bottom: 8px; margin-bottom: 14px;
+    text-shadow: 0 0 8px rgba(74,222,128,0.5);
+  }
+  #suspect_modal .modal_close {
+    background: none; border: 1px solid #1f3322; color: #4ade80;
+    font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 8px;
+    font-family: inherit;
+  }
+  #suspect_modal .modal_close:hover { background: rgba(74,222,128,0.12); border-color: #4ade80; }
+
+  .modal_body { display: flex; gap: 16px; align-items: flex-start; }
+  .modal_images { display: flex; gap: 10px; flex: 0 0 auto; }
+  .modal_img_col { width: 118px; }
+  .modal_img_label {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: #4ade80; opacity: 0.7; margin-bottom: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .modal_img {
+    width: 100%; aspect-ratio: 3 / 4; object-fit: cover;
+    background: #000; border-radius: 2px;
+    border: 1px solid #2a4a30;
+    filter: grayscale(100%) contrast(1.1);
+    box-shadow: 0 0 12px rgba(0,0,0,0.8);
+  }
+
+  /* ------- right-side data panel ------- */
+  .modal_result_col { flex: 1; min-width: 0; }
+  .result_table {
+    width: 100%; border-collapse: collapse; font-size: 12px;
+    font-family: inherit;
+    display: none;
+  }
+  .result_table.visible { display: table; }
+  .result_table td { padding: 5px 6px; vertical-align: top; }
+  .result_table td.k {
+    color: #4ade80; opacity: 0.75; text-transform: uppercase;
+    letter-spacing: 0.08em; font-size: 10px; white-space: nowrap;
+    padding-top: 7px;
+  }
+  .result_table td.v { color: #d1e7d5; }
+  .result_table td.c {
+    color: #d1e7d5; text-align: left; word-break: break-word;
+    border-bottom: 1px dotted #1f3322;
+  }
+  .result_table tr.headline td {
+    font-weight: 700; font-size: 13px; letter-spacing: 0.1em;
+    border-bottom: 1px solid #1f3322; padding-bottom: 8px;
+  }
+  .match_badge {
+    display: inline-block; padding: 3px 10px; font-weight: 700;
+    letter-spacing: 0.12em; font-size: 12px;
+  }
+  .match_badge.yes { color: #052e12; background: #4ade80; box-shadow: 0 0 14px rgba(74,222,128,0.45); }
+  .match_badge.no  { color: #2e0505; background: #f87171; box-shadow: 0 0 14px rgba(248,113,113,0.45); }
+  .match_badge.unknown { color: #d1e7d5; border: 1px solid #1f3322; }
+  .result_table tr.subhead td {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em;
+    color: #4ade80; opacity: 0.5;
+    border-bottom: 1px solid #1f3322; padding-bottom: 3px;
+  }
+  .result_table td.k.yes { color: #4ade80; opacity: 1; text-shadow: 0 0 6px rgba(74,222,128,0.5); }
+  .result_table td.k.no  { color: #f87171; opacity: 1; text-shadow: 0 0 6px rgba(248,113,113,0.5); }
+
+  #suspect_modal .compare_status {
+    margin-top: 14px; font-size: 11px; color: #4ade80; opacity: 0.85;
+    min-height: 16px; display: flex; align-items: center; gap: 8px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .spinner {
+    display: none;
+    width: 14px; height: 14px; flex: 0 0 auto;
+    border: 2px solid rgba(74,222,128,0.2);
+    border-top-color: #4ade80; border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  .compare_status.busy .spinner { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .dots::after {
+    content: '';
+    animation: dots 1.4s steps(4, end) infinite;
+  }
+  @keyframes dots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+  }
+
+  .compare_progress {
+    display: none;
+    margin-top: 10px; height: 3px; overflow: hidden;
+    background: rgba(74,222,128,0.12);
+  }
+  .compare_status.busy ~ .compare_progress { display: block; }
+  .compare_progress::before {
+    content: ''; display: block; height: 100%; width: 40%;
+    background: linear-gradient(90deg, transparent, #4ade80, transparent);
+    animation: indeterminate 1.3s ease-in-out infinite;
+  }
+  @keyframes indeterminate {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+  #suspect_modal .compare_result {
+    margin-top: 8px; font-size: 11px; line-height: 1.5; color: #6f8f76;
+    white-space: pre-wrap;
+  }
+  #suspect_modal .modal_actions { margin-top: 16px; display: flex; justify-content: flex-end; }
+  #suspect_modal .compare_btn {
+    background: transparent; border: 1px solid #4ade80; color: #4ade80;
+    padding: 9px 22px; border-radius: 2px; font-size: 12px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase; cursor: pointer;
+    font-family: inherit;
+    text-shadow: 0 0 8px rgba(74,222,128,0.4);
+  }
+  #suspect_modal .compare_btn:hover:not(:disabled) {
+    background: rgba(74,222,128,0.12);
+  }
+  #suspect_modal .compare_btn:disabled { opacity: 0.35; cursor: default; }
+
+  /* ---------- upload-preview modal (dossier style) ---------- */
   .modal_card {
-    background: #1d2026; border: 1px solid #2a2e37; border-radius: 12px;
-    width: 100%; max-width: 640px; max-height: 90vh; overflow-y: auto;
-    padding: 16px;
+    position: relative;
+    background: #0a0d0a;
+    border: 1px solid var(--line); border-radius: 4px;
+    width: 100%; max-width: 620px; max-height: 88vh; overflow-y: auto;
+    padding: 18px;
+    font-family: 'Courier New', Courier, monospace;
+    box-shadow: 0 0 40px rgba(74,222,128,0.08), inset 0 0 60px rgba(0,0,0,0.6);
+  }
+  .modal_card::after {
+    content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg, rgba(0,0,0,0.16) 0px, rgba(0,0,0,0.16) 1px,
+      transparent 1px, transparent 3px);
+    border-radius: 4px;
   }
   .modal_head {
     display: flex; align-items: center; justify-content: space-between;
-    font-size: 15px; font-weight: 600; color: #9fd4ff; margin-bottom: 14px;
+    font-size: 13px; font-weight: 700; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--grn);
+    border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 14px;
+    text-shadow: 0 0 8px rgba(74,222,128,0.5);
   }
   .modal_close {
-    background: none; border: none; color: #b7bcc7; font-size: 24px;
-    line-height: 1; cursor: pointer; padding: 0 4px;
+    background: none; border: 1px solid var(--line); color: var(--grn);
+    font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 8px;
+    font-family: inherit; position: relative; z-index: 1;
   }
-  .modal_images { display: flex; gap: 12px; }
-  .modal_img_col { flex: 1; min-width: 0; }
-  .modal_img_label {
-    font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
-    color: #8a90a0; margin-bottom: 6px;
-  }
-  .modal_img {
-    width: 100%; aspect-ratio: 3 / 4; object-fit: contain;
-    background: #000; border-radius: 8px; border: 1px solid #2a2e37;
-  }
-  .compare_status {
-    margin-top: 14px; font-size: 13px; color: #b7bcc7; min-height: 18px;
-  }
-  .compare_result {
-    margin-top: 8px; font-size: 14px; line-height: 1.5;
-    white-space: pre-wrap; font-variant-numeric: tabular-nums;
-  }
-  .compare_result.match { color: #4cff88; }
-  .compare_result.nomatch { color: #ff8b5b; }
-  .modal_actions { margin-top: 16px; display: flex; justify-content: flex-end; }
-  .compare_btn {
-    background: #2a5fd0; border: 1px solid #2a5fd0; color: #fff;
-    padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
-    cursor: pointer;
-  }
-  .compare_btn:disabled { opacity: 0.5; cursor: default; }
-
-  /* simple upload-preview modal */
+  .modal_close:hover { background: var(--grn-faint); border-color: var(--grn); }
   #upload_modal {
     display: none;
     position: fixed; inset: 0; z-index: 500;
-    background: rgba(0,0,0,0.7);
+    background: rgba(0,0,0,0.82);
     align-items: center; justify-content: center;
     padding: 20px;
   }
   #upload_modal.visible { display: flex; }
-  #upload_modal .modal_card { max-width: 420px; }
+  #upload_modal .modal_card { max-width: 400px; }
   #upload_preview_img {
-    width: 100%; max-height: 60vh; object-fit: contain;
-    background: #000; border-radius: 8px; border: 1px solid #2a2e37;
+    width: 100%; max-height: 58vh; object-fit: contain;
+    background: #000; border-radius: 2px; border: 1px solid #2a4a30;
+    filter: grayscale(100%) contrast(1.1);
+    box-shadow: 0 0 12px rgba(0,0,0,0.8);
   }
-  #upload_status { margin-top: 12px; font-size: 13px; color: #b7bcc7; min-height: 18px; }
+  #upload_status {
+    margin-top: 12px; font-size: 11px; color: var(--grn); opacity: 0.85;
+    min-height: 16px; letter-spacing: 0.06em; text-transform: uppercase;
+  }
+
+  /* ---------- phone landscape: keep everything on one screen ---------- */
+  /* narrow: velocity readout and centered speed slider would collide */
+  @media (max-width: 900px) {
+    .vel_readout { font-size: 9px; padding: 6px 8px; }
+    #speed_slider_wrap { top: 50px; padding: 5px 12px; }
+    #speed_slider { width: 130px; }
+  }
+  /* short: compact the compare/upload modals so no internal scroll */
+  @media (max-height: 420px) {
+    /* --- topbar: tighter buttons so all 4 + title fit --- */
+    .topbar { padding: 6px 10px; }
+    .topbar h1 { font-size: 11px; letter-spacing: 0.12em; }
+    .tab_btn { padding: 6px 9px; font-size: 9px; letter-spacing: 0.06em; }
+
+    /* --- shared controls: shrink pads, tuck readouts --- */
+    #arrow_pad { width: 120px; height: 120px; bottom: 14px; left: 14px; gap: 4px; }
+    .arrow_btn { font-size: 14px; }
+    .diag_btn { font-size: 11px; }
+    #joystick_pad { width: 120px; height: 120px; bottom: 14px; left: 14px; }
+    #joystick_knob { width: 36px; height: 36px; }
+    .holo_btn, .mode_btn { padding: 6px 10px; font-size: 9px; }
+    .mode_btn { top: 48px; }
+    #rotate_slider_wrap { width: 140px; padding: 5px 8px; }
+    #rotate_slider { width: 120px; }
+
+    /* --- map HUD: horizontal row under the vel readout, clear of the pad --- */
+    #map_hud_left {
+      top: 52px; left: 10px;
+      flex-direction: row; gap: 5px;
+    }
+    .map_hud_btn { padding: 6px 8px; font-size: 9px; letter-spacing: 0.05em; }
+    #map_pose_readout { font-size: 9px; padding: 5px 8px; bottom: 10px; }
+    #setpose_hint { bottom: 40px; font-size: 9px; }
+
+    /* --- camera PIP: below the mode button so it never overlaps --- */
+    #map_cam_overlay { top: 88px; right: 10px; width: 30%; min-width: 160px; }
+    #suspect_modal { padding: 8px; }
+    #suspect_modal .modal_card { padding: 10px 12px; max-height: 96vh; }
+    #suspect_modal .modal_head { margin-bottom: 8px; padding-bottom: 5px; font-size: 11px; }
+    .modal_body { gap: 10px; }
+    .modal_img_col { width: 84px; }
+    .modal_img { max-height: 24vh; }
+    .result_table td { padding: 3px 5px; }
+    .result_table { font-size: 11px; }
+    #suspect_modal .compare_status { margin-top: 8px; font-size: 10px; }
+    #suspect_modal .modal_actions { margin-top: 8px; }
+    #suspect_modal .compare_btn { padding: 6px 16px; font-size: 11px; }
+    .hud_corner { width: 10px; height: 10px; }
+    #upload_modal .modal_card { padding: 10px 12px; }
+    #upload_preview_img { max-height: 52vh; }
+    #upload_status { margin-top: 8px; font-size: 10px; }
+  }
 </style>
 </head>
 <body>
@@ -235,56 +573,79 @@
 
 <div id="main_content">
 <div class="topbar">
-  <h1><span id="conn_dot" class="status_dot"></span>ROS2 Dashboard</h1>
+  <h1><span id="conn_dot" class="status_dot"></span>// Patrol Console</h1>
   <div class="tabs">
+    <button id="tab_camera_btn" class="tab_btn tab_switch" data-tab="camera_tab">Camera</button>
+    <button id="tab_map_btn" class="tab_btn tab_switch active" data-tab="map_tab">Map</button>
     <button id="upload_btn" class="tab_btn">Upload Image</button>
-    <button id="capture_btn" class="tab_btn">Capture (YOLO)</button>
+    <button id="capture_btn" class="tab_btn">Capture (YOLO)<span id="capture_badge"></span></button>
     <input id="upload_input" type="file" accept="image/*" style="display:none;">
   </div>
 </div>
 
 <!-- ================= CAMERA VIEW ================= -->
-<div id="camera_tab" class="tab_page active">
+<div id="camera_tab" class="tab_page">
   <div id="camera_stage">
     <img id="video_feed" src="/video_feed" alt="camera feed">
+  </div>
+</div>
 
-    <button id="holo_btn" class="holo_btn">Holonomic: OFF</button>
-    <button id="mode_btn" class="mode_btn">Control: Arrows</button>
-
-    <div class="vel_readout" id="vel_readout">linear: 0.00 &nbsp; strafe: 0.00 &nbsp; angular: 0.00</div>
-
-    <div id="speed_slider_wrap">
-      <label id="speed_label">Speed: 60%</label>
-      <input id="speed_slider" type="range" min="10" max="100" value="60">
+<!-- ================= MAP TAB ================= -->
+<div id="map_tab" class="tab_page active">
+  <div id="map_stage">
+    <canvas id="map_canvas"></canvas>
+    <div id="map_hud_left">
+      <button id="setpose_btn" class="map_hud_btn">&#10148; Set Pose</button>
+      <button id="recenter_btn" class="map_hud_btn">&#8853; Recenter</button>
+      <button id="camoverlay_btn" class="map_hud_btn">&#9635; Camera</button>
     </div>
+    <img id="map_cam_overlay" alt="camera overlay">
+    <div id="map_pose_readout">x: -- &nbsp; y: -- &nbsp; yaw: --&deg;</div>
+    <div id="setpose_hint">Click robot position, drag to set heading, release to confirm</div>
+    <div id="map_empty_msg">No map received yet &mdash; is the map server / SLAM running?</div>
+  </div>
+</div>
 
-    <div id="joystick_pad" style="display:none;">
-      <div id="joystick_knob"></div>
-    </div>
+<!-- ============ SHARED DRIVE-CONTROL OVERLAY (both tabs) ============ -->
+<div id="control_overlay">
+  <button id="holo_btn" class="holo_btn">Holonomic: OFF</button>
+  <button id="mode_btn" class="mode_btn">Control: Arrows</button>
 
-    <div id="arrow_pad">
-      <button id="arrow_up_left" class="arrow_btn diag_btn">&#8598;</button>
-      <button id="arrow_up" class="arrow_btn">&#9650;</button>
-      <button id="arrow_up_right" class="arrow_btn diag_btn">&#8599;</button>
-      <button id="arrow_left" class="arrow_btn">&#9664;</button>
-      <button id="arrow_right" class="arrow_btn">&#9654;</button>
-      <button id="arrow_down_left" class="arrow_btn diag_btn">&#8601;</button>
-      <button id="arrow_down" class="arrow_btn">&#9660;</button>
-      <button id="arrow_down_right" class="arrow_btn diag_btn">&#8600;</button>
-    </div>
+  <div class="vel_readout" id="vel_readout">linear: 0.00 &nbsp; strafe: 0.00 &nbsp; angular: 0.00</div>
 
-    <div id="rotate_slider_wrap">
-      <label>Rotate (angular.z)</label>
-      <input id="rotate_slider" type="range" min="-100" max="100" value="0">
-    </div>
+  <div id="speed_slider_wrap">
+    <label id="speed_label">Speed: 60%</label>
+    <input id="speed_slider" type="range" min="10" max="100" value="60">
+  </div>
+
+  <div id="joystick_pad" style="display:none;">
+    <div id="joystick_knob"></div>
+  </div>
+
+  <div id="arrow_pad">
+    <button id="arrow_up_left" class="arrow_btn diag_btn">&#8598;</button>
+    <button id="arrow_up" class="arrow_btn">&#9650;</button>
+    <button id="arrow_up_right" class="arrow_btn diag_btn">&#8599;</button>
+    <button id="arrow_left" class="arrow_btn">&#9664;</button>
+    <button id="arrow_right" class="arrow_btn">&#9654;</button>
+    <button id="arrow_down_left" class="arrow_btn diag_btn">&#8601;</button>
+    <button id="arrow_down" class="arrow_btn">&#9660;</button>
+    <button id="arrow_down_right" class="arrow_btn diag_btn">&#8600;</button>
+  </div>
+
+  <div id="rotate_slider_wrap">
+    <label>Rotate (angular.z)</label>
+    <input id="rotate_slider" type="range" min="-100" max="100" value="0">
   </div>
 </div>
 
 <!-- ================= UPLOAD PREVIEW MODAL ================= -->
 <div id="upload_modal">
   <div class="modal_card">
+    <span class="hud_corner tl"></span><span class="hud_corner tr"></span>
+    <span class="hud_corner bl"></span><span class="hud_corner br"></span>
     <div class="modal_head">
-      <span>Uploaded Reference Image</span>
+      <span>// Reference Image</span>
       <button id="upload_modal_close" class="modal_close">&times;</button>
     </div>
     <img id="upload_preview_img" alt="uploaded reference">
@@ -295,22 +656,33 @@
 <!-- ================= SUSPECT MATCH MODAL ================= -->
 <div id="suspect_modal">
   <div class="modal_card">
+    <span class="hud_corner tl"></span><span class="hud_corner tr"></span>
+    <span class="hud_corner bl"></span><span class="hud_corner br"></span>
     <div class="modal_head">
-      <span>Suspect Feature Match</span>
+      <span>// Suspect Feature Match</span>
       <button id="modal_close" class="modal_close">&times;</button>
     </div>
-    <div class="modal_images">
-      <div class="modal_img_col">
-        <div class="modal_img_label">Reference (uploaded)</div>
-        <img id="ref_preview" class="modal_img" alt="reference">
+    <div class="modal_body">
+      <div class="modal_images">
+        <div class="modal_img_col">
+          <div class="modal_img_label">&#9632; Suspect</div>
+          <img id="ref_preview" class="modal_img" alt="reference">
+        </div>
+        <div class="modal_img_col">
+          <div class="modal_img_label">&#9632; Candidate</div>
+          <img id="cand_preview" class="modal_img" alt="candidate">
+        </div>
       </div>
-      <div class="modal_img_col">
-        <div class="modal_img_label">Candidate (YOLO crop)</div>
-        <img id="cand_preview" class="modal_img" alt="candidate">
+      <div class="modal_result_col">
+        <table id="result_table" class="result_table"></table>
+        <div id="compare_result" class="compare_result"></div>
       </div>
     </div>
-    <div id="compare_status" class="compare_status"></div>
-    <div id="compare_result" class="compare_result"></div>
+    <div id="compare_status" class="compare_status">
+      <span class="spinner"></span>
+      <span id="compare_status_text"></span>
+    </div>
+    <div class="compare_progress"></div>
     <div class="modal_actions">
       <button id="compare_btn" class="compare_btn">Start Compare</button>
     </div>
@@ -336,6 +708,347 @@ function tryLockLandscape() {
 tryLockLandscape();
 document.addEventListener('click', tryLockLandscape, { once: true });
 
+// ---------------- Tabs (Camera / Map) ----------------
+const tabSwitchBtns = document.querySelectorAll('.tab_switch');
+tabSwitchBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    tabSwitchBtns.forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab_page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'map_tab') resizeMapCanvas();
+  });
+});
+
+// ---------------- Interactive map viewer ----------------
+const mapCanvas = document.getElementById('map_canvas');
+const mapCtx = mapCanvas.getContext('2d');
+const setposeBtn = document.getElementById('setpose_btn');
+const recenterBtn = document.getElementById('recenter_btn');
+const mapPoseReadout = document.getElementById('map_pose_readout');
+const setposeHint = document.getElementById('setpose_hint');
+const mapEmptyMsg = document.getElementById('map_empty_msg');
+
+let mapImg = new Image();       // offscreen decoded map PNG
+let mapLoaded = false;
+let mapInfo = null;             // {resolution, origin_x, origin_y, width, height}
+let robotPose = null;           // {x, y, yaw_deg} world coords
+let suspectPose = null;         // {x, y} world coords of matched suspect
+let scanPoints = [];            // world-frame [x,y] points from /scan
+
+// view transform: canvas = img * scale + (tx, ty)
+let view = { scale: 1, tx: 0, ty: 0 };
+let viewInitialized = false;
+let userMovedView = false;   // once the user pans/zooms, stop auto-refitting
+
+const MIN_SCALE = 0.2, MAX_SCALE = 40;
+
+function resizeMapCanvas() {
+  const r = mapCanvas.getBoundingClientRect();
+  mapCanvas.width = r.width * devicePixelRatio;
+  mapCanvas.height = r.height * devicePixelRatio;
+  // refit whenever the canvas gets real dimensions and the user hasn't
+  // taken control of the view yet (fixes fit-to-hidden-tab default 300x150)
+  if (mapLoaded && !userMovedView && mapCanvas.width > 0) fitMapToView();
+  drawMap();
+}
+window.addEventListener('resize', resizeMapCanvas);
+
+function fitMapToView() {
+  if (!mapLoaded || mapCanvas.width === 0 || mapCanvas.height === 0) return;
+  const cw = mapCanvas.width, ch = mapCanvas.height;
+  const s = Math.min(cw / mapImg.width, ch / mapImg.height) * 0.9;
+  view.scale = s;
+  view.tx = (cw - mapImg.width * s) / 2;
+  view.ty = (ch - mapImg.height * s) / 2;
+  viewInitialized = true;
+}
+
+// --- coordinate transforms ---
+// world (map frame, metres) <-> map image pixels. The server flipped the
+// occupancy grid vertically, so image row 0 = top = max Y.
+function worldToImg(x, y) {
+  return [
+    (x - mapInfo.origin_x) / mapInfo.resolution,
+    mapInfo.height - (y - mapInfo.origin_y) / mapInfo.resolution,
+  ];
+}
+function imgToWorld(px, py) {
+  return [
+    px * mapInfo.resolution + mapInfo.origin_x,
+    (mapInfo.height - py) * mapInfo.resolution + mapInfo.origin_y,
+  ];
+}
+// map image pixels <-> canvas device pixels
+function imgToCanvas(px, py) { return [px * view.scale + view.tx, py * view.scale + view.ty]; }
+function canvasToImg(cx, cy) { return [(cx - view.tx) / view.scale, (cy - view.ty) / view.scale]; }
+// browser event coords -> canvas device pixels
+function evtToCanvas(e) {
+  const r = mapCanvas.getBoundingClientRect();
+  const p = e.touches ? e.touches[0] : e;
+  return [(p.clientX - r.left) * devicePixelRatio, (p.clientY - r.top) * devicePixelRatio];
+}
+
+function drawRobotArrow(ctx, cx, cy, yawRad, size, color) {
+  // canvas y is down, world yaw is CCW-positive -> negate for screen angle
+  const a = -yawRad;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(a);
+  ctx.beginPath();
+  ctx.moveTo(size, 0);                 // nose
+  ctx.lineTo(-size * 0.6, size * 0.55);
+  ctx.lineTo(-size * 0.3, 0);          // notch
+  ctx.lineTo(-size * 0.6, -size * 0.55);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMap() {
+  const cw = mapCanvas.width, ch = mapCanvas.height;
+  mapCtx.clearRect(0, 0, cw, ch);
+  if (!mapLoaded) return;
+
+  mapCtx.imageSmoothingEnabled = view.scale < 3;  // pixelated when zoomed in
+  mapCtx.save();
+  mapCtx.translate(view.tx, view.ty);
+  mapCtx.scale(view.scale, view.scale);
+  mapCtx.drawImage(mapImg, 0, 0);
+  mapCtx.restore();
+
+  // laser scan points (drawn under the robot marker)
+  if (scanPoints.length && mapInfo) {
+    mapCtx.fillStyle = 'rgba(248,113,113,0.85)';
+    const r = Math.max(1.5, Math.min(3.5, view.scale * 0.6));
+    for (const p of scanPoints) {
+      const [ix, iy] = worldToImg(p[0], p[1]);
+      const [cx, cy] = imgToCanvas(ix, iy);
+      mapCtx.fillRect(cx - r / 2, cy - r / 2, r, r);
+    }
+  }
+
+  // robot marker
+  if (robotPose && mapInfo) {
+    const [ix, iy] = worldToImg(robotPose.x, robotPose.y);
+    const [cx, cy] = imgToCanvas(ix, iy);
+    const size = Math.max(10, Math.min(26, 0.35 / mapInfo.resolution * view.scale));
+    drawRobotArrow(mapCtx, cx, cy, robotPose.yaw_deg * Math.PI / 180, size, '#4ade80');
+  }
+
+  // suspect marker (matched target) — drawn above the robot
+  if (suspectPose && mapInfo) {
+    const [ix, iy] = worldToImg(suspectPose.x, suspectPose.y);
+    const [cx, cy] = imgToCanvas(ix, iy);
+    const r = Math.max(6, Math.min(18, 0.3 / mapInfo.resolution * view.scale));
+    mapCtx.beginPath();
+    mapCtx.arc(cx, cy, r, 0, 2 * Math.PI);
+    mapCtx.fillStyle = 'rgba(239,68,68,0.85)';
+    mapCtx.strokeStyle = '#fff';
+    mapCtx.lineWidth = 2;
+    mapCtx.shadowColor = '#ef4444';
+    mapCtx.shadowBlur = 12;
+    mapCtx.fill();
+    mapCtx.shadowBlur = 0;
+    mapCtx.stroke();
+  }
+
+  // set-pose drag preview
+  if (poseDrag) {
+    const [sx, sy] = poseDrag.startCanvas;
+    drawRobotArrow(mapCtx, sx, sy, poseDrag.yaw, 18 * devicePixelRatio / 2 + 8, '#f87171');
+    mapCtx.strokeStyle = '#f87171';
+    mapCtx.lineWidth = 1.5;
+    mapCtx.setLineDash([6, 4]);
+    mapCtx.beginPath();
+    mapCtx.moveTo(sx, sy);
+    mapCtx.lineTo(poseDrag.currCanvas[0], poseDrag.currCanvas[1]);
+    mapCtx.stroke();
+    mapCtx.setLineDash([]);
+  }
+}
+
+// --- data feeds: reuse existing map_update / pose_update events ---
+function reloadMapImage() {
+  const img = new Image();
+  img.onload = () => {
+    mapImg = img;
+    mapLoaded = true;
+    mapEmptyMsg.classList.add('hidden');
+    if (!viewInitialized) fitMapToView();
+    drawMap();
+  };
+  img.src = '/map.png?t=' + Date.now();
+}
+fetch('/map_info').then(r => r.json()).then(info => {
+  if (info && info.resolution) { mapInfo = info; reloadMapImage(); }
+});
+fetch('/suspect/pose').then(r => r.json()).then(s => {
+  if (s && typeof s.x === 'number') { suspectPose = s; drawMap(); }
+});
+socket.on('map_update', (info) => {
+  if (info && info.resolution) mapInfo = info;
+  reloadMapImage();
+});
+socket.on('pose_update', (pose) => {
+  robotPose = pose;
+  mapPoseReadout.innerHTML =
+    `x: ${pose.x.toFixed(2)} &nbsp; y: ${pose.y.toFixed(2)} &nbsp; yaw: ${pose.yaw_deg.toFixed(1)}&deg;`;
+  drawMap();
+});
+
+socket.on('scan_update', (d) => {
+  scanPoints = d.points || [];
+  drawMap();
+});
+
+socket.on('suspect_update', (s) => {
+  if (s && typeof s.x === 'number') { suspectPose = s; drawMap(); }
+});
+
+// --- pan / zoom / pinch ---
+let panning = null;             // {startCanvas, startView}
+let pinch = null;               // {d0, scale0, mid0, view0}
+let poseDrag = null;            // {startCanvas, currCanvas, yaw}
+let setPoseMode = false;
+
+setposeBtn.addEventListener('click', () => {
+  setPoseMode = !setPoseMode;
+  setposeBtn.classList.toggle('active', setPoseMode);
+  setposeHint.classList.toggle('visible', setPoseMode);
+  mapCanvas.classList.toggle('setpose', setPoseMode);
+});
+
+recenterBtn.addEventListener('click', () => { userMovedView = false; fitMapToView(); drawMap(); });
+
+// --- translucent camera picture-in-picture ---
+const camOverlayBtn = document.getElementById('camoverlay_btn');
+const mapCamOverlay = document.getElementById('map_cam_overlay');
+let camOverlayOn = false;
+
+camOverlayBtn.addEventListener('click', () => {
+  camOverlayOn = !camOverlayOn;
+  camOverlayBtn.classList.toggle('active', camOverlayOn);
+  mapCamOverlay.classList.toggle('visible', camOverlayOn);
+  // only hold the extra MJPEG connection open while actually shown —
+  // a hidden <img> with a live src still streams and costs X5 CPU
+  mapCamOverlay.src = camOverlayOn ? '/video_feed' : '';
+});
+
+function zoomAt(cx, cy, factor) {
+  userMovedView = true;
+  const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale * factor));
+  const real = ns / view.scale;
+  view.tx = cx - (cx - view.tx) * real;
+  view.ty = cy - (cy - view.ty) * real;
+  view.scale = ns;
+  drawMap();
+}
+
+mapCanvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const [cx, cy] = evtToCanvas(e);
+  zoomAt(cx, cy, e.deltaY < 0 ? 1.15 : 1 / 1.15);
+}, { passive: false });
+
+function mapPointerDown(e) {
+  const [cx, cy] = evtToCanvas(e);
+  if (setPoseMode && mapLoaded && mapInfo) {
+    poseDrag = { startCanvas: [cx, cy], currCanvas: [cx, cy], yaw: 0 };
+  } else {
+    panning = { startCanvas: [cx, cy], startView: { ...view } };
+    mapCanvas.classList.add('panning');
+  }
+  e.preventDefault();
+}
+function mapPointerMove(e) {
+  if (!panning && !poseDrag && !pinch) return;
+  const [cx, cy] = evtToCanvas(e);
+  if (poseDrag) {
+    poseDrag.currCanvas = [cx, cy];
+    const dx = cx - poseDrag.startCanvas[0];
+    // canvas y down -> invert dy for world-CCW yaw
+    const dy = -(cy - poseDrag.startCanvas[1]);
+    if (Math.hypot(dx, dy) > 4) poseDrag.yaw = Math.atan2(dy, dx);
+    drawMap();
+  } else if (panning) {
+    userMovedView = true;
+    view.tx = panning.startView.tx + (cx - panning.startCanvas[0]);
+    view.ty = panning.startView.ty + (cy - panning.startCanvas[1]);
+    drawMap();
+  }
+  e.preventDefault();
+}
+function mapPointerUp() {
+  if (poseDrag) {
+    const [ix, iy] = canvasToImg(poseDrag.startCanvas[0], poseDrag.startCanvas[1]);
+    const [wx, wy] = imgToWorld(ix, iy);
+    socket.emit('set_initial_pose', { x: wx, y: wy, yaw: poseDrag.yaw });
+    poseDrag = null;
+    // one-shot like RViz: drop out of set-pose mode after confirming
+    setPoseMode = false;
+    setposeBtn.classList.remove('active');
+    setposeHint.classList.remove('visible');
+    mapCanvas.classList.remove('setpose');
+    drawMap();
+  }
+  panning = null;
+  pinch = null;
+  mapCanvas.classList.remove('panning');
+}
+
+mapCanvas.addEventListener('mousedown', mapPointerDown);
+window.addEventListener('mousemove', mapPointerMove);
+window.addEventListener('mouseup', mapPointerUp);
+
+// touch: 1 finger pan (or set-pose drag), 2 finger pinch zoom
+mapCanvas.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 2) {
+    const r = mapCanvas.getBoundingClientRect();
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const d0 = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    const mid = [
+      ((t0.clientX + t1.clientX) / 2 - r.left) * devicePixelRatio,
+      ((t0.clientY + t1.clientY) / 2 - r.top) * devicePixelRatio,
+    ];
+    pinch = { d0, scale0: view.scale, mid0: mid, view0: { ...view } };
+    panning = null; poseDrag = null;
+  } else {
+    mapPointerDown(e);
+  }
+  e.preventDefault();
+}, { passive: false });
+
+mapCanvas.addEventListener('touchmove', (e) => {
+  if (pinch && e.touches.length === 2) {
+    userMovedView = true;
+    const t0 = e.touches[0], t1 = e.touches[1];
+    const d = Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+    const factor = d / pinch.d0;
+    const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, pinch.scale0 * factor));
+    const real = ns / pinch.view0.scale;
+    view.tx = pinch.mid0[0] - (pinch.mid0[0] - pinch.view0.tx) * real;
+    view.ty = pinch.mid0[1] - (pinch.mid0[1] - pinch.view0.ty) * real;
+    view.scale = ns;
+    drawMap();
+    e.preventDefault();
+  } else {
+    mapPointerMove(e);
+  }
+}, { passive: false });
+
+mapCanvas.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) mapPointerUp();
+  else if (e.touches.length === 1) pinch = null;
+});
+
+// map tab is the default view, so size the canvas immediately at load
+// (previously this only happened on tab switch / window resize)
+resizeMapCanvas();
+
 // ---------------- Suspect matcher: upload / capture / compare ----------------
 const uploadBtn = document.getElementById('upload_btn');
 const uploadInput = document.getElementById('upload_input');
@@ -346,7 +1059,15 @@ const refPreview = document.getElementById('ref_preview');
 const candPreview = document.getElementById('cand_preview');
 const compareBtn = document.getElementById('compare_btn');
 const compareStatus = document.getElementById('compare_status');
+const compareStatusText = document.getElementById('compare_status_text');
 const compareResult = document.getElementById('compare_result');
+
+// status helpers: setStatus(text, busy?) keeps the spinner element intact
+function setStatus(text, busy = false) {
+  compareStatusText.textContent = text;
+  compareStatus.classList.toggle('busy', busy);
+  compareStatusText.classList.toggle('dots', busy);
+}
 
 // simple upload-preview modal
 const uploadModal = document.getElementById('upload_modal');
@@ -356,6 +1077,17 @@ const uploadStatus = document.getElementById('upload_status');
 
 let haveReference = false;
 let haveCandidate = false;
+let compareInFlight = false;   // true from Start Compare click until result/err
+let hasUnseenResult = false;   // result arrived while the popup was closed
+const captureBadge = document.getElementById('capture_badge');
+
+function updateBadge() {
+  captureBadge.classList.toggle('visible', hasUnseenResult);
+}
+function markResultSeen() {
+  hasUnseenResult = false;
+  updateBadge();
+}
 
 function openModal() { modal.classList.add('visible'); }
 function closeModal() { modal.classList.remove('visible'); }
@@ -368,7 +1100,9 @@ uploadModalClose.addEventListener('click', closeUploadModal);
 uploadModal.addEventListener('click', (e) => { if (e.target === uploadModal) closeUploadModal(); });
 
 function refreshCompareEnabled() {
-  compareBtn.disabled = !(haveReference && haveCandidate);
+  // never enable while a comparison is still running on the robot — the
+  // comparator node isn't re-entrant, so overlapping runs can cross results
+  compareBtn.disabled = compareInFlight || !(haveReference && haveCandidate);
 }
 
 function bust(url) { return url + '?t=' + Date.now(); }
@@ -377,6 +1111,12 @@ function bust(url) { return url + '?t=' + Date.now(); }
 uploadBtn.addEventListener('click', () => uploadInput.click());
 uploadInput.addEventListener('change', async () => {
   if (!uploadInput.files || !uploadInput.files[0]) return;
+  if (compareInFlight) {
+    openUploadModal();
+    uploadStatus.textContent = 'Comparison still running — wait for it to finish';
+    uploadInput.value = '';
+    return;
+  }
   const file = uploadInput.files[0];
 
   // show a local preview instantly, before the upload round-trips
@@ -407,9 +1147,22 @@ uploadInput.addEventListener('change', async () => {
 
 // --- Capture candidate from YOLO detector ---
 captureBtn.addEventListener('click', async () => {
-  compareStatus.textContent = 'Capturing candidate from YOLO...';
-  compareResult.textContent = '';
-  compareResult.className = 'compare_result';
+  if (compareInFlight) {
+    // reopening the popup mid-compare: restore the same busy state/animation
+    openModal();
+    setStatus('Comparing — first run triggers a cold VLM load, may take several minutes', true);
+    return;
+  }
+  if (hasUnseenResult) {
+    // a result arrived while the popup was closed: show it first; the next
+    // click of Capture proceeds to a fresh capture
+    openModal();
+    setStatus('Compare complete.', false);
+    markResultSeen();
+    return;
+  }
+  setStatus('Capturing candidate from YOLO', true);
+  clearResult();
   openModal();
   try {
     const r = await fetch('/suspect/capture_candidate', { method: 'POST' });
@@ -417,64 +1170,143 @@ captureBtn.addEventListener('click', async () => {
     if (d.ok) {
       haveCandidate = true;
       candPreview.src = bust('/suspect/candidate.jpg');
-      compareStatus.textContent = 'Candidate captured. ' +
-        (haveReference ? 'Ready to compare.' : 'Now upload a reference image.');
+      setStatus('Candidate captured. ' +
+        (haveReference ? 'Ready to compare.' : 'Now upload a reference image.'), false);
     } else {
-      compareStatus.textContent = 'Capture failed: ' + d.message;
+      setStatus('Capture failed: ' + d.message, false);
     }
   } catch (err) {
-    compareStatus.textContent = 'Capture error: ' + err;
+    setStatus('Capture error: ' + err, false);
   }
   refreshCompareEnabled();
 });
 
 // --- Run comparison ---
 compareBtn.addEventListener('click', async () => {
+  if (compareInFlight) return;   // ignore repeat clicks while one is running
+  compareInFlight = true;
   compareBtn.disabled = true;
-  compareResult.textContent = '';
-  compareResult.className = 'compare_result';
-  compareStatus.textContent =
-    'Comparing... first run triggers a cold VLM load and can take several minutes.';
+  clearResult();
+  setStatus('Comparing — first run triggers a cold VLM load, may take several minutes', true);
   try {
     const r = await fetch('/suspect/compare', { method: 'POST' });
     const d = await r.json();
     if (!d.ok) {
-      compareStatus.textContent = 'Compare failed: ' + d.message;
+      setStatus('Compare failed: ' + d.message, false);
     } else {
-      compareStatus.textContent = 'Compare complete.';
-      renderResult(d.match, d.detail);
+      setStatus('Compare complete.', false);
+      // Prefer the /suspect_feature_match_detail topic value; fall back to the
+      // service response message, which carries the identical breakdown string.
+      renderResult(d.match, d.detail || d.message);
+      if (!modal.classList.contains('visible')) {
+        hasUnseenResult = true;
+        updateBadge();
+      }
     }
   } catch (err) {
-    compareStatus.textContent = 'Compare error: ' + err;
+    setStatus('Compare error: ' + err, false);
   }
+  compareInFlight = false;
   refreshCompareEnabled();
 });
 
-function renderResult(match, detail) {
-  let text = '';
-  if (match === true)  text = '✓ MATCH — worth a closer look';
-  else if (match === false) text = '✗ NO MATCH';
-  else text = 'No parseable result';
-  if (detail) text += '\n\n' + detail;
-  compareResult.textContent = text;
-  compareResult.className = 'compare_result ' +
-    (match === true ? 'match' : (match === false ? 'nomatch' : ''));
+const resultTable = document.getElementById('result_table');
+let lastMatch = null;
+let lastDetail = null;
+
+function clearResult() {
+  lastMatch = null;
+  lastDetail = null;
+  resultTable.innerHTML = '';
+  resultTable.classList.remove('visible');
+  compareResult.textContent = '';
 }
 
-// async result pushes (in case the service returned before the topic landed,
-// or the match arrives slightly later)
-socket.on('match_result', (d) => {
-  if (modal.classList.contains('visible')) {
-    renderResult(d.match, compareResult.textContent.includes('\n')
-      ? compareResult.textContent.split('\n\n')[1] : null);
+// The comparator node emits detail in this exact shape (see
+// attribute_compare_from_files_node._handle_compare):
+//   "no (1/3 fields match) — clothing_color: mismatch (ref='dark' cand='black'),
+//    clothing_type: match (ref='jacket' cand='jacket'), hairstyle: ..."
+// Parse each "<field>: <match|mismatch> (ref='X' cand='Y')" segment.
+function parseDetail(detail) {
+  if (!detail) return { fields: [], summary: '' };
+  const fields = [];
+  const re = /([A-Za-z_][A-Za-z0-9_ ]*?)\s*:\s*(match|mismatch)\s*\(ref='([^']*)'\s*cand='([^']*)'\)/gi;
+  let m;
+  while ((m = re.exec(detail)) !== null) {
+    fields.push({
+      name: m[1].trim().replace(/_/g, ' '),
+      matched: m[2].toLowerCase() === 'match',
+      ref: m[3].trim(),
+      cand: m[4].trim(),
+    });
   }
+  // grab the "(1/3 fields match)" summary if present
+  const sm = detail.match(/\((\d+\/\d+ fields match)\)/i);
+  return { fields, summary: sm ? sm[1] : '' };
+}
+
+function renderResult(match, detail) {
+  if (detail) lastDetail = detail;
+
+  // If the Bool topic value hasn't cached yet, derive match from the
+  // breakdown string, which starts with "yes (...)" or "no (...)".
+  if (match === null || match === undefined) {
+    if (lastDetail && /^\s*yes\b/i.test(lastDetail)) match = true;
+    else if (lastDetail && /^\s*no\b/i.test(lastDetail)) match = false;
+  }
+  lastMatch = match;
+
+  const parsed = parseDetail(lastDetail);
+  const rows = [];
+
+  // headline match row
+  let headline = 'NO RESULT';
+  let badgeClass = 'unknown';
+  if (match === true)  { headline = 'MATCH'; badgeClass = 'yes'; }
+  else if (match === false) { headline = 'NO MATCH'; badgeClass = 'no'; }
+  const summaryText = parsed.summary
+    ? `<span style="opacity:0.6; font-weight:400; font-size:10px; margin-left:8px;">${parsed.summary}</span>` : '';
+  rows.push(
+    `<tr class="headline"><td class="k">status</td>` +
+    `<td class="v" colspan="2"><span class="match_badge ${badgeClass}">${headline}</span>${summaryText}</td></tr>`
+  );
+
+  // column header for the per-field rows
+  if (parsed.fields.length) {
+    rows.push(
+      `<tr class="subhead"><td class="k"></td>` +
+      `<td class="c">suspect</td><td class="c">candidate</td></tr>`
+    );
+  }
+
+  // per-field rows: field name | suspect value | candidate value,
+  // field name colored by match/mismatch
+  parsed.fields.forEach(f => {
+    rows.push(
+      `<tr><td class="k ${f.matched ? 'yes' : 'no'}">${f.name}</td>` +
+      `<td class="c">${f.ref || '—'}</td>` +
+      `<td class="c">${f.cand || '—'}</td></tr>`
+    );
+  });
+
+  resultTable.innerHTML = rows.join('');
+  resultTable.classList.add('visible');
+
+  // raw fallback only if we had detail text but couldn't parse any fields
+  compareResult.textContent =
+    (lastDetail && parsed.fields.length === 0) ? lastDetail : '';
+}
+
+// async result pushes (service may return before/after the topics land)
+socket.on('match_result', (d) => {
+  renderResult(d.match, lastDetail);
+  if (!modal.classList.contains('visible')) { hasUnseenResult = true; updateBadge(); }
 });
 socket.on('match_detail', (d) => {
-  if (modal.classList.contains('visible') && d.detail) {
-    // append/refresh detail under whatever match line is shown
-    const firstLine = compareResult.textContent.split('\n\n')[0] || '';
-    compareResult.textContent = firstLine + '\n\n' + d.detail;
-  }
+  if (!d.detail) return;
+  lastDetail = d.detail;
+  renderResult(lastMatch, lastDetail);
+  if (!modal.classList.contains('visible')) { hasUnseenResult = true; updateBadge(); }
 });
 
 // ---------------- Holonomic mode ----------------
@@ -518,7 +1350,6 @@ const velReadout = document.getElementById('vel_readout');
 
 const MAX_LINEAR = 0.5;    // m/s, forward/back (and strafe, in holonomic mode)
 const MAX_ANGULAR = 1.0;   // rad/s
-const PAD_RADIUS = 80;     // px, matches #joystick_pad width/2
 const SEND_HZ = 10;
 
 let dragging = false;
@@ -535,26 +1366,27 @@ function updateReadout() {
 
 function updateFromPointer(clientX, clientY) {
   const rect = joyPad.getBoundingClientRect();
+  const padRadius = rect.width / 2;   // adaptive: pad shrinks on small screens
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
   let dx = clientX - cx;
   let dy = clientY - cy;
   const dist = Math.hypot(dx, dy);
-  if (dist > PAD_RADIUS) {
-    dx = dx / dist * PAD_RADIUS;
-    dy = dy / dist * PAD_RADIUS;
+  if (dist > padRadius) {
+    dx = dx / dist * padRadius;
+    dy = dy / dist * padRadius;
   }
   setKnob(dx, dy);
 
-  vx = (-dy / PAD_RADIUS) * MAX_LINEAR;
+  vx = (-dy / padRadius) * MAX_LINEAR;
   if (holonomic) {
     // horizontal drag = strafe; rotation comes from the separate slider
     // NOTE: positive linear.y = strafe LEFT (REP103 / matches firmware IK),
     // so dragging right (positive dx) must produce NEGATIVE vy.
-    vy = (-dx / PAD_RADIUS) * MAX_LINEAR;
+    vy = (-dx / padRadius) * MAX_LINEAR;
   } else {
     // horizontal drag = turn (differential-style arc steering)
-    wz = (-dx / PAD_RADIUS) * MAX_ANGULAR;
+    wz = (-dx / padRadius) * MAX_ANGULAR;
   }
   updateReadout();
 }

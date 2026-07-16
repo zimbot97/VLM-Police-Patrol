@@ -1,0 +1,280 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mecanum_robot">
+
+  <!--
+    Dimensions from hardware datasheets (all in metres):
+      Chassis plate  : 198 × 128 × 4 mm acrylic  (3 layers, 45 mm standoffs)
+      Mecanum wheel  : Ø80 mm × 37.4 mm wide, 96 g
+      Motor body     : Ø36.6 mm × 76 mm, 6 mm D-shaft
+      lx / ly        : measure from axle-centre to axle-centre on assembled robot
+                       and update these two values before running odometry.
+  -->
+
+  <!-- ── Acrylic plate ────────────────────────────────────────────────────── -->
+  <xacro:property name="plate_l"  value="0.198"/>  <!-- 198 mm -->
+  <xacro:property name="plate_w"  value="0.128"/>  <!-- 128 mm -->
+  <xacro:property name="plate_h"  value="0.004"/>  <!-- 4 mm acrylic -->
+  <xacro:property name="standoff" value="0.045"/>  <!-- 45 mm aluminium standoff -->
+  <!-- centre-to-centre gap between adjacent plates -->
+  <xacro:property name="layer_dz" value="${standoff + plate_h}"/>  <!-- 49 mm -->
+
+  <!-- ── Wheel / drive ────────────────────────────────────────────────────── -->
+  <xacro:property name="wheel_radius" value="0.040"/>   <!-- Ø80 mm / 2 -->
+  <xacro:property name="wheel_width"  value="0.0374"/>  <!-- 37.4 mm -->
+
+  <!--
+    lx = half front-to-rear axle distance  (measure on assembled robot)
+    ly = half left-to-right axle distance  (measure on assembled robot)
+    Wheel centres overhang the 128 mm chassis by ~32 mm per side.
+  -->
+  <!-- Half distances (matched to config/mecanum_params.yaml).
+       Full wheelbase = 125 mm, full track = 200 mm. -->
+  <xacro:property name="lx" value="0.0625"/>  <!-- 125 mm wheelbase / 2 -->
+  <xacro:property name="ly" value="0.100"/>   <!-- 200 mm track / 2 -->
+
+  <!-- Drive axle hangs below the bottom plate; wheel & motor are coaxial on it.
+       Measured plate-underside → axle-centre ≈ 30 mm. -->
+  <xacro:property name="axle_drop" value="0.030"/>
+  <xacro:property name="wheel_z"   value="${-axle_drop}"/>  <!-- wheel axle below plate -->
+  <xacro:property name="motor_z"   value="${-axle_drop}"/>  <!-- motor shares the axle -->
+
+  <!-- ── Materials ────────────────────────────────────────────────────────── -->
+  <material name="acrylic_black"><color rgba="0.10 0.10 0.10 0.85"/></material>
+  <material name="acrylic_clear"><color rgba="0.80 0.90 1.00 0.50"/></material>
+  <material name="standoff_col"> <color rgba="0.75 0.75 0.80 1.00"/></material>
+  <material name="imu_blue">     <color rgba="0.10 0.30 0.90 1.00"/></material>
+  <material name="wheel_col">    <color rgba="1.00 0.60 0.00 1.00"/></material>
+  <material name="motor_col">    <color rgba="0.25 0.25 0.25 1.00"/></material>
+
+  <!-- ── Inertia helpers ──────────────────────────────────────────────────── -->
+  <!-- solid box: m, x, y, z -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y+z*z)/12}" ixy="0" ixz="0"
+               iyy="${m*(x*x+z*z)/12}" iyz="0"
+               izz="${m*(x*x+y*y)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- solid cylinder: m, r, l (axis = Z) -->
+  <xacro:macro name="cyl_inertia" params="m r l">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r+l*l)/12}" ixy="0" ixz="0"
+               iyy="${m*(3*r*r+l*l)/12}" iyz="0"
+               izz="${m*r*r/2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ════════════════════════════════════════════════════════════════════════
+       LINKS
+       ════════════════════════════════════════════════════════════════════════ -->
+
+  <!-- base_footprint — ground-projection frame (Nav2 convention) -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <!-- axle sits wheel_radius above ground; plate is axle_drop above the axle -->
+    <origin xyz="0 0 ${wheel_radius + axle_drop}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Layer 1 — bottom plate (motor / battery level) ───────────────────── -->
+  <link name="base_link">
+    <visual>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+      <material name="acrylic_black"/>
+    </visual>
+    <collision>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+    </collision>
+    <xacro:box_inertia m="0.090" x="${plate_l}" y="${plate_w}" z="${plate_h}"/>
+  </link>
+
+  <!-- ── Layer 2 — middle plate (Pico / TB6612 / wiring) ─────────────────── -->
+  <link name="mid_plate_link">
+    <visual>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+      <material name="acrylic_black"/>
+    </visual>
+    <collision>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+    </collision>
+    <xacro:box_inertia m="0.090" x="${plate_l}" y="${plate_w}" z="${plate_h}"/>
+  </link>
+
+  <joint name="mid_plate_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="mid_plate_link"/>
+    <origin xyz="0 0 ${layer_dz}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Layer 3 — top plate (RDK X5 / sensors) ──────────────────────────── -->
+  <link name="top_plate_link">
+    <visual>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+      <material name="acrylic_black"/>
+    </visual>
+    <collision>
+      <geometry><box size="${plate_l} ${plate_w} ${plate_h}"/></geometry>
+    </collision>
+    <xacro:box_inertia m="0.090" x="${plate_l}" y="${plate_w}" z="${plate_h}"/>
+  </link>
+
+  <joint name="top_plate_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="top_plate_link"/>
+    <origin xyz="0 0 ${2*layer_dz}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Standoff visual macro (4 per pair of plates) ────────────────────── -->
+  <xacro:macro name="standoff_link" params="name x y parent_link">
+    <link name="${name}_standoff">
+      <visual>
+        <geometry><cylinder length="${standoff}" radius="0.003"/></geometry>
+        <material name="standoff_col"/>
+      </visual>
+      <inertial>
+        <mass value="0.005"/>
+        <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      </inertial>
+    </link>
+    <joint name="${name}_standoff_joint" type="fixed">
+      <parent link="${parent_link}"/>
+      <child  link="${name}_standoff"/>
+      <origin xyz="${x} ${y} ${plate_h/2 + standoff/2}" rpy="0 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Bottom → Mid standoffs (corners, inset 15 mm) -->
+  <xacro:standoff_link name="b2m_fl" x=" 0.084" y=" 0.049" parent_link="base_link"/>
+  <xacro:standoff_link name="b2m_fr" x=" 0.084" y="-0.049" parent_link="base_link"/>
+  <xacro:standoff_link name="b2m_rl" x="-0.084" y=" 0.049" parent_link="base_link"/>
+  <xacro:standoff_link name="b2m_rr" x="-0.084" y="-0.049" parent_link="base_link"/>
+
+  <!-- Mid → Top standoffs -->
+  <xacro:standoff_link name="m2t_fl" x=" 0.084" y=" 0.049" parent_link="mid_plate_link"/>
+  <xacro:standoff_link name="m2t_fr" x=" 0.084" y="-0.049" parent_link="mid_plate_link"/>
+  <xacro:standoff_link name="m2t_rl" x="-0.084" y=" 0.049" parent_link="mid_plate_link"/>
+  <xacro:standoff_link name="m2t_rr" x="-0.084" y="-0.049" parent_link="mid_plate_link"/>
+
+  <!-- ── Motor macro (Ø36.6 mm × 76 mm body, mounted to chassis side) ──────── -->
+  <xacro:macro name="motor_link" params="name x y mirror">
+    <link name="${name}_motor">
+      <visual>
+        <!-- body -->
+        <geometry><cylinder length="0.076" radius="0.0183"/></geometry>
+        <material name="motor_col"/>
+      </visual>
+      <xacro:cyl_inertia m="0.200" r="0.0183" l="0.076"/>
+    </link>
+    <joint name="${name}_motor_joint" type="fixed">
+      <parent link="base_link"/>
+      <child  link="${name}_motor"/>
+      <!-- motor axis along Y, body 3 cm below plate.
+           Outboard face flush with the plate edge (plate_w/2); the shaft
+           bridges the remaining gap out to the wheel at y=±ly.
+           body half-length = 0.038 → centre = plate_w/2 - 0.038 -->
+      <origin xyz="${x} ${mirror*(plate_w/2 - 0.038)} ${motor_z}" rpy="${pi/2} 0 0"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:motor_link name="FL" x=" ${lx}" y=" ${ly}" mirror=" 1"/>
+  <xacro:motor_link name="RL" x="-${lx}" y=" ${ly}" mirror=" 1"/>
+  <xacro:motor_link name="RR" x="-${lx}" y="-${ly}" mirror="-1"/>
+  <xacro:motor_link name="FR" x=" ${lx}" y="-${ly}" mirror="-1"/>
+
+  <!-- ── Wheel macro ──────────────────────────────────────────────────────── -->
+  <xacro:macro name="mecanum_wheel" params="name x y">
+    <link name="${name}_wheel_link">
+      <visual>
+        <geometry><cylinder length="${wheel_width}" radius="${wheel_radius}"/></geometry>
+        <material name="wheel_col"/>
+      </visual>
+      <collision>
+        <!-- simplified sphere for contact — avoids roller-geometry complexity -->
+        <geometry><sphere radius="${wheel_radius}"/></geometry>
+      </collision>
+      <!--
+        Wheel mass 96 g per datasheet.
+        I_zz (spin) = ½mr²  = 0.5 × 0.096 × 0.040² = 7.68e-5
+        I_xx = I_yy = m(3r²+l²)/12 = 0.096×(3×0.0016+0.001399)/12 = 4.96e-5
+      -->
+      <inertial>
+        <mass value="0.096"/>
+        <inertia ixx="4.96e-5" ixy="0" ixz="0"
+                 iyy="4.96e-5" iyz="0"
+                 izz="7.68e-5"/>
+      </inertial>
+    </link>
+
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child  link="${name}_wheel_link"/>
+      <origin xyz="${x} ${y} ${wheel_z}" rpy="${pi/2} 0 0"/>
+      <axis xyz="0 0 1"/>
+      <dynamics damping="0.01" friction="0.1"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- Wheel order matches firmware: A=FL, B=RL, C=RR, D=FR -->
+  <xacro:mecanum_wheel name="FL" x=" ${lx}" y=" ${ly}"/>
+  <xacro:mecanum_wheel name="RL" x="-${lx}" y=" ${ly}"/>
+  <xacro:mecanum_wheel name="RR" x="-${lx}" y="-${ly}"/>
+  <xacro:mecanum_wheel name="FR" x=" ${lx}" y="-${ly}"/>
+
+  <!-- ── IMU — MPU-9250 on Pico I²C (GP0/GP1), mounted on the centre plate ──
+       Measured on robot: 6 mm above the plate top, 15 mm toward the back (-X),
+       35 mm to the left (+Y). -->
+  <link name="imu_link">
+    <visual>
+      <geometry><box size="0.021 0.016 0.003"/></geometry>
+      <material name="imu_blue"/>
+    </visual>
+    <inertial>
+      <mass value="0.005"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="mid_plate_link"/>
+    <child  link="imu_link"/>
+    <origin xyz="-0.015 0.035 ${plate_h/2 + 0.006}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── RDK X5 (top plate centre) — no visual until PCB dimensions confirmed -->
+  <link name="rdkx5_link">
+    <inertial>
+      <mass value="0.150"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+  </link>
+  <joint name="rdkx5_joint" type="fixed">
+    <parent link="top_plate_link"/>
+    <child  link="rdkx5_link"/>
+    <origin xyz="0 0 0.012" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ── Depth camera (RGB-D bar) — attached directly to base_link ──────────
+       Body: 164 mm wide (Y) × 24 mm deep/long (X) × 25 mm tall (Z).
+       Measured: 90 mm forward of centre (+X), 60 mm above the top plate. -->
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.024 0.164 0.025"/></geometry>
+      <material name="motor_col"/>
+    </visual>
+    <inertial>
+      <mass value="0.050"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="camera_link"/>
+    <!-- pitch -16° tilts the camera's +X (forward) axis upward -->
+    <origin xyz="0.090 0 ${2*layer_dz + 0.060}" rpy="0 ${radians(-16)} 0"/>
+  </joint>
+
+</robot>

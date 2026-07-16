@@ -80,8 +80,8 @@ static const MotorPins MOTORS[4] = {
 
 // ─── Robot geometry (measure from actual chassis before tuning) ───────────────
 static constexpr float WHEEL_R   = 0.04f;   // wheel radius [m]
-static constexpr float LX        = 0.125f;   // half wheelbase (front-rear) [m]
-static constexpr float LY        = 0.200f;   // half track width (left-right) [m]
+static constexpr float LX        = 0.0625f;  // half wheelbase (front-rear) [m]  (full 125 mm / 2)
+static constexpr float LY        = 0.100f;   // half track width (left-right) [m] (full 200 mm / 2)
 static constexpr float ENC_CPR   = 1560.0f;  // 13 pulses/rev × 4× quadrature × 30:1 gear
 static constexpr float MAX_W     = 20.0f;    // max wheel angular speed [rad/s]
 static constexpr float WD_SECS   = 0.5f;     // cmd_vel watchdog timeout [s]

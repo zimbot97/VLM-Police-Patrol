@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>police_patrol_bot</name>
+  <version>0.1.0</version>
+  <description>
+    Bringup for the police patrol mecanum robot. The RP2040 firmware
+    (pico/mecanum_base) runs all kinematics, wheel odometry and IMU onboard and
+    reaches ROS 2 through micro_ros_agent. This package launches the agent, the
+    robot_state_publisher (from police_patrol_bot_description) and the
+    robot_localization EKF that fuses /odom + /imu/data_raw into odom->base_footprint.
+  </description>
+
+  <maintainer email="brian@braintreex.com">Brian</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>police_patrol_bot_description</exec_depend>
+  <exec_depend>micro_ros_agent</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>astra_camera</exec_depend>
+  <exec_depend>pointcloud_to_laserscan</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

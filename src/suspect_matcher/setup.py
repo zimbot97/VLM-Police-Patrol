@@ -33,6 +33,8 @@ setup(
             'suspect_matcher.yoloworld_detect_node:main',
             'yolo_detect = '
             'suspect_matcher.yolo_detect_node:main',
+            'suspect_localizer = '
+            'suspect_matcher.suspect_localizer_node:main',
         ],
     },
 )

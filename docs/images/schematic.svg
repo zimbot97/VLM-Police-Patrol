@@ -1,0 +1,222 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 840" font-family="'DejaVu Sans Mono','Consolas',monospace">
+  <style>
+    .wire   { stroke:#1a5e3a; stroke-width:2; fill:none; }
+    .wifi   { stroke:#7d3c98; stroke-width:2; fill:none; stroke-dasharray:6 4; }
+    .pwr12  { stroke:#c0392b; stroke-width:2.5; fill:none; }
+    .pwr5   { stroke:#e67e22; stroke-width:2.5; fill:none; }
+    .pwr33  { stroke:#2980b9; stroke-width:2.5; fill:none; }
+    .comp   { fill:#fbfbf7; stroke:#222; stroke-width:1.6; }
+    .comphd { fill:#e8eef2; stroke:#222; stroke-width:1.6; }
+    .lbl    { font-size:13px; fill:#111; font-weight:bold; }
+    .sub    { font-size:10px; fill:#555; }
+    .pin    { font-size:9.5px; fill:#333; }
+    .net    { font-size:10px; fill:#1a5e3a; font-weight:bold; }
+    .netw   { font-size:10px; fill:#7d3c98; font-weight:bold; }
+    .r12    { font-size:10px; fill:#c0392b; font-weight:bold; }
+    .r5     { font-size:10px; fill:#e67e22; font-weight:bold; }
+    .r33    { font-size:10px; fill:#2980b9; font-weight:bold; }
+    .title  { font-size:18px; fill:#111; font-weight:bold; }
+    text { dominant-baseline:middle; }
+  </style>
+
+  <rect x="0" y="0" width="1240" height="840" fill="#ffffff"/>
+  <text class="title" x="24" y="30">VLM Police Patrol — Wiring Schematic</text>
+  <text class="sub" x="24" y="52" font-size="12">RDK X5 · RP2040 micro-ROS · TB6612 4-ch · 4× MC520P30 · MPU-9250 · SSD1306 · LeTMC-520</text>
+
+  <!-- ============ POWER RAILS (top) ============ -->
+  <line class="pwr12" x1="200" y1="120" x2="1150" y2="120"/>
+  <text class="r12" x="1158" y="120">+12V</text>
+  <line class="wire" x1="200" y1="145" x2="1150" y2="145"/>
+  <text class="net" x="1158" y="145">GND</text>
+  <line class="pwr5" x1="180" y1="170" x2="1150" y2="170"/>
+  <text class="r5" x="1158" y="170">+5V</text>
+  <line class="pwr33" x1="150" y1="410" x2="1150" y2="410"/>
+  <text class="r33" x="1158" y="410">+3.3V</text>
+
+  <!-- ============ BATTERY ============ -->
+  <rect class="comp" x="24" y="90" width="150" height="80" rx="4"/>
+  <text class="lbl" x="99" y="112" text-anchor="middle">BATTERY</text>
+  <text class="sub" x="99" y="130" text-anchor="middle">Doublepow 11.1V</text>
+  <text class="sub" x="99" y="144" text-anchor="middle">5000mAh + BMS</text>
+  <line class="pwr12" x1="174" y1="120" x2="200" y2="120"/>
+  <line class="wire" x1="174" y1="145" x2="200" y2="145"/>
+
+  <!-- ============ BUCK ============ -->
+  <rect class="comp" x="60" y="215" width="150" height="60" rx="4"/>
+  <text class="lbl" x="135" y="237" text-anchor="middle">BUCK 12V→5V 5A</text>
+  <text class="sub" x="135" y="255" text-anchor="middle">IN: 12V   OUT: 5V</text>
+  <!-- 12V tap down to buck IN -->
+  <line class="pwr12" x1="195" y1="120" x2="195" y2="215"/>
+  <circle cx="195" cy="120" r="3.5" fill="#c0392b"/>
+  <!-- buck OUT up to 5V rail -->
+  <line class="pwr5" x1="180" y1="215" x2="180" y2="170"/>
+
+  <!-- ============ RDK X5 ============ -->
+  <rect class="comphd" x="430" y="230" width="180" height="120" rx="4"/>
+  <text class="lbl" x="520" y="252" text-anchor="middle">RDK X5</text>
+  <text class="sub" x="520" y="268" text-anchor="middle">BPU + CPU</text>
+  <text class="pin" x="437" y="290">5V</text>
+  <text class="pin" x="437" y="315">GND</text>
+  <text class="pin" x="603" y="290" text-anchor="end">USB</text>
+  <text class="pin" x="603" y="320" text-anchor="end">I2C 3/5</text>
+  <!-- 5V feed -->
+  <line class="pwr5" x1="430" y1="290" x2="410" y2="290"/>
+  <line class="pwr5" x1="410" y1="290" x2="410" y2="170"/>
+  <circle cx="410" cy="170" r="3.5" fill="#e67e22"/>
+  <!-- GND -->
+  <line class="wire" x1="430" y1="315" x2="400" y2="315"/>
+  <line class="wire" x1="400" y1="315" x2="400" y2="145"/>
+  <circle cx="400" cy="145" r="3.5" fill="#1a5e3a"/>
+
+  <!-- ============ CAMERA (right of X5, same row) ============ -->
+  <rect class="comp" x="750" y="230" width="190" height="60" rx="4"/>
+  <text class="lbl" x="845" y="252" text-anchor="middle">LeTMC-520 RGBD</text>
+  <text class="sub" x="845" y="270" text-anchor="middle">USB 2bc5:0403 / 0502</text>
+  <text class="pin" x="757" y="260">USB</text>
+  <line class="wire" x1="610" y1="290" x2="668" y2="290"/>
+  <line class="wire" x1="668" y1="290" x2="668" y2="260"/>
+  <line class="wire" x1="668" y1="260" x2="750" y2="260"/>
+  <text class="net" x="616" y="278">USB</text>
+
+  <!-- ============ OLED (below camera) ============ -->
+  <rect class="comp" x="750" y="320" width="190" height="64" rx="4"/>
+  <text class="lbl" x="930" y="338" text-anchor="end">SSD1306 OLED</text>
+  <text class="sub" x="930" y="356" text-anchor="end">0.96in · I2C 0x3C</text>
+  <text class="pin" x="757" y="345">SDA/SCL</text>
+  <text class="pin" x="757" y="370">3V3</text>
+  <!-- I2C from X5 -->
+  <line class="wire" x1="610" y1="320" x2="650" y2="320"/>
+  <line class="wire" x1="650" y1="320" x2="650" y2="345"/>
+  <line class="wire" x1="650" y1="345" x2="750" y2="345"/>
+  <text class="net" x="616" y="308">I2C 3/5</text>
+  <!-- OLED 3V3 down to rail -->
+  <line class="pwr33" x1="750" y1="370" x2="726" y2="370"/>
+  <line class="pwr33" x1="726" y1="370" x2="726" y2="410"/>
+  <circle cx="726" cy="410" r="3.5" fill="#2980b9"/>
+
+  <!-- ============ ESP8285 ============ -->
+  <rect class="comp" x="180" y="450" width="150" height="60" rx="4"/>
+  <text class="lbl" x="255" y="472" text-anchor="middle">ESP8285</text>
+  <text class="sub" x="255" y="488" text-anchor="middle">micro-ROS transport</text>
+  <text class="pin" x="323" y="480" text-anchor="end">UART</text>
+  <!-- UART straight to RP2040 -->
+  <line class="wire" x1="330" y1="480" x2="430" y2="480"/>
+    <!-- WiFi dashed to X5 -->
+  <line class="wifi" x1="255" y1="450" x2="255" y2="392"/>
+  <line class="wifi" x1="255" y1="392" x2="520" y2="392"/>
+  <line class="wifi" x1="520" y1="392" x2="520" y2="350"/>
+  <text class="netw" x="262" y="380">Wi-Fi → X5 agent</text>
+
+  <!-- ============ MPU-9250 ============ -->
+  <rect class="comp" x="180" y="560" width="150" height="64" rx="4"/>
+  <text class="lbl" x="190" y="580">MPU-9250</text>
+  <text class="sub" x="190" y="598">9-axis IMU · 0x68</text>
+  <text class="pin" x="323" y="585" text-anchor="end">SDA/SCL</text>
+  <text class="pin" x="323" y="608" text-anchor="end">3V3</text>
+  <!-- I2C to RP2040 -->
+  <line class="wire" x1="330" y1="585" x2="380" y2="585"/>
+  <line class="wire" x1="380" y1="585" x2="380" y2="520"/>
+  <line class="wire" x1="380" y1="520" x2="430" y2="520"/>
+    <!-- 3V3 up to rail -->
+  <line class="pwr33" x1="330" y1="608" x2="360" y2="608"/>
+  <line class="pwr33" x1="360" y1="608" x2="360" y2="410"/>
+  <circle cx="360" cy="410" r="3.5" fill="#2980b9"/>
+
+  <!-- ============ RP2040 ============ -->
+  <rect class="comphd" x="430" y="450" width="180" height="170" rx="4"/>
+  <text class="lbl" x="520" y="472" text-anchor="middle">RP2040</text>
+  <text class="sub" x="520" y="488" text-anchor="middle">micro-ROS base_bridge</text>
+  <text class="pin" x="437" y="474">UART</text>
+  <text class="pin" x="437" y="520">I2C1 GP26/27</text>
+  <text class="pin" x="437" y="555">3V3</text>
+  <text class="pin" x="437" y="580">GND</text>
+  <text class="pin" x="603" y="510" text-anchor="end">PWM/DIR GP2–GP13</text>
+  <text class="pin" x="603" y="535" text-anchor="end">STBY GP14</text>
+  <text class="pin" x="603" y="565" text-anchor="end">ENC GP15–GP22</text>
+  <!-- 3V3 -->
+  <line class="pwr33" x1="430" y1="555" x2="405" y2="555"/>
+  <line class="pwr33" x1="405" y1="555" x2="405" y2="410"/>
+  <circle cx="405" cy="410" r="3.5" fill="#2980b9"/>
+  <!-- GND -->
+  <line class="wire" x1="430" y1="580" x2="393" y2="580"/>
+  <line class="wire" x1="393" y1="580" x2="393" y2="145"/>
+  <circle cx="393" cy="145" r="3.5" fill="#1a5e3a"/>
+
+  <!-- ============ TB6612 ============ -->
+  <rect class="comp" x="720" y="450" width="180" height="230" rx="4"/>
+  <text class="lbl" x="810" y="472" text-anchor="middle">TB6612 4-ch</text>
+  <text class="sub" x="810" y="488" text-anchor="middle">motor driver</text>
+  <text class="pin" x="727" y="510">VM 12V</text>
+  <text class="pin" x="727" y="535">VCC 3V3</text>
+  <text class="pin" x="727" y="560">GND</text>
+  <text class="pin" x="727" y="595">PWM/IN ×4</text>
+  <text class="pin" x="727" y="625">STBY</text>
+  <text class="pin" x="893" y="500" text-anchor="end">AO1/AO2</text>
+  <text class="pin" x="893" y="555" text-anchor="end">BO1/BO2</text>
+  <text class="pin" x="893" y="610" text-anchor="end">CO1/CO2</text>
+  <text class="pin" x="893" y="665" text-anchor="end">DO1/DO2</text>
+  <!-- VM from 12V rail -->
+  <line class="pwr12" x1="720" y1="510" x2="695" y2="510"/>
+  <line class="pwr12" x1="695" y1="510" x2="695" y2="120"/>
+  <circle cx="695" cy="120" r="3.5" fill="#c0392b"/>
+  <!-- VCC from 3.3V rail -->
+  <line class="pwr33" x1="720" y1="535" x2="706" y2="535"/>
+  <line class="pwr33" x1="706" y1="535" x2="706" y2="410"/>
+  <circle cx="706" cy="410" r="3.5" fill="#2980b9"/>
+  <!-- GND -->
+  <line class="wire" x1="720" y1="560" x2="684" y2="560"/>
+  <line class="wire" x1="684" y1="560" x2="684" y2="145"/>
+  <circle cx="684" cy="145" r="3.5" fill="#1a5e3a"/>
+  <!-- PWM/IN from RP2040 -->
+  <line class="wire" x1="610" y1="510" x2="660" y2="510"/>
+  <line class="wire" x1="660" y1="510" x2="660" y2="595"/>
+  <line class="wire" x1="660" y1="595" x2="720" y2="595"/>
+  <!-- STBY -->
+  <line class="wire" x1="610" y1="535" x2="643" y2="535"/>
+  <line class="wire" x1="643" y1="535" x2="643" y2="625"/>
+  <line class="wire" x1="643" y1="625" x2="720" y2="625"/>
+  <text class="net" x="182" y="652">PWM GP2/5/8/11 · DIR GP3-4/6-7/9-10/12-13</text>
+  <text class="net" x="182" y="668">STBY GP14 · LED GP25 (agent status)</text>
+
+  <!-- ============ MOTORS ============ -->
+  <rect class="comp" x="980" y="475" width="170" height="50" rx="4"/>
+  <text class="lbl" x="1065" y="494" text-anchor="middle">M1 FL MC520P30</text>
+  <text class="sub" x="1065" y="510" text-anchor="middle">12V · enc 390 cpr</text>
+  <rect class="comp" x="980" y="530" width="170" height="50" rx="4"/>
+  <text class="lbl" x="1065" y="555" text-anchor="middle">M2 FR MC520P30</text>
+  <rect class="comp" x="980" y="585" width="170" height="50" rx="4"/>
+  <text class="lbl" x="1065" y="610" text-anchor="middle">M3 RL MC520P30</text>
+  <rect class="comp" x="980" y="640" width="170" height="50" rx="4"/>
+  <text class="lbl" x="1065" y="665" text-anchor="middle">M4 RR MC520P30</text>
+  <!-- driver outputs, straight horizontals -->
+  <line class="wire" x1="900" y1="500" x2="980" y2="500"/>
+  <line class="wire" x1="900" y1="555" x2="980" y2="555"/>
+  <line class="wire" x1="900" y1="610" x2="980" y2="610"/>
+  <line class="wire" x1="900" y1="665" x2="980" y2="665"/>
+
+  <!-- encoder feedback bus (right side, down, back to RP2040) -->
+  <line class="wire" x1="1150" y1="500" x2="1180" y2="500"/>
+  <line class="wire" x1="1150" y1="555" x2="1180" y2="555"/>
+  <line class="wire" x1="1150" y1="610" x2="1180" y2="610"/>
+  <line class="wire" x1="1150" y1="665" x2="1180" y2="665"/>
+  <line class="wire" x1="1180" y1="500" x2="1180" y2="715"/>
+  <line class="wire" x1="1180" y1="715" x2="632" y2="715"/>
+  <line class="wire" x1="632" y1="715" x2="632" y2="565"/>
+  <line class="wire" x1="632" y1="565" x2="610" y2="565"/>
+  <circle cx="1180" cy="555" r="3.5" fill="#1a5e3a"/>
+  <circle cx="1180" cy="610" r="3.5" fill="#1a5e3a"/>
+  <circle cx="1180" cy="665" r="3.5" fill="#1a5e3a"/>
+  <text class="net" x="700" y="729">ENC A/B GP15–GP22 → RP2040 · enc VCC from RP2040 3V3 (motor pin 2)</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="24" y="750" width="1192" height="76" fill="#fafafa" stroke="#ccc"/>
+  <text class="lbl" x="36" y="770">LEGEND</text>
+  <line class="pwr12" x1="120" y1="770" x2="160" y2="770"/><text class="pin" x="166" y="770">+12V</text>
+  <line class="pwr5"  x1="225" y1="770" x2="265" y2="770"/><text class="pin" x="271" y="770">+5V</text>
+  <line class="pwr33" x1="325" y1="770" x2="365" y2="770"/><text class="pin" x="371" y="770">+3.3V</text>
+  <line class="wire"  x1="440" y1="770" x2="480" y2="770"/><text class="pin" x="486" y="770">signal / GND</text>
+  <line class="wifi"  x1="580" y1="770" x2="620" y2="770"/><text class="pin" x="626" y="770">Wi-Fi</text>
+  <circle cx="700" cy="770" r="3.5" fill="#1a5e3a"/><text class="pin" x="710" y="770">junction (connected)</text>
+  <text class="sub" x="36" y="796" font-size="11">All grounds common (battery, buck, X5, RP2040, TB6612, IMU, OLED) · camera + ESP8285 power omitted for clarity (USB / 3V3)</text>
+  <text class="sub" x="36" y="812" font-size="11">Connection diagram in schematic style — for an editable KiCad .kicad_sch with ERC/netlist, recreate these nets in KiCad.</text>
+</svg>

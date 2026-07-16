@@ -24,6 +24,12 @@ Exposes:
 
 Topics/services (override via ROS2 params):
   image_topic          (default: /camera/image_raw)      sensor_msgs/Image
+  compressed_image_topic (default: /camera/image_raw/compressed)  sensor_msgs/CompressedImage
+  use_compressed       (default: False)  subscribe to compressed topic and relay
+                        JPEG bytes verbatim (near-zero CPU) instead of re-encoding
+  stream_max_width     (default: 0=off)  downscale frames wider than this before streaming
+  stream_fps           (default: 15)     MJPEG pacing cap
+  jpeg_quality         (default: 70)     only used when (re)encoding raw/resized frames
   cmd_vel_topic        (default: /cmd_vel)               geometry_msgs/Twist
   holonomic_mode_topic (default: /holonomic_mode)        std_msgs/Bool
   capture_crop_service (default: /capture_crop)          std_srvs/Trigger
@@ -53,13 +59,13 @@ from ament_index_python.packages import get_package_share_directory
 from cv_bridge import CvBridge
 from flask import Flask, Response, jsonify, render_template, request, send_file
 from flask_socketio import SocketIO
-from geometry_msgs.msg import PoseWithCovarianceStamped, Twist
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped, Twist
 from nav_msgs.msg import OccupancyGrid
 from rcl_interfaces.srv import SetParameters
 from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile, QoSReliabilityPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image, LaserScan
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
@@ -73,6 +79,20 @@ def _find_template_folder():
         return local
     try:
         return os.path.join(get_package_share_directory('dashboard_flask'), 'templates')
+    except Exception:  # noqa: BLE001
+        return local
+
+
+def _find_static_folder():
+    """Same source/installed resolution as templates, for the static/ dir.
+    Under --merge-install, setup.py copies static/ to
+    share/dashboard_flask/static/ — Flask must be told this path explicitly
+    or the vendored socket.io.min.js 404s and the offline page breaks."""
+    local = os.path.join(os.path.dirname(__file__), 'static')
+    if os.path.isdir(local):
+        return local
+    try:
+        return os.path.join(get_package_share_directory('dashboard_flask'), 'static')
     except Exception:  # noqa: BLE001
         return local
 
@@ -96,11 +116,17 @@ class DashboardNode(Node):
 
         # --- params -----------------------------------------------------
         self.declare_parameter('image_topic', '/camera/image_raw')
+        self.declare_parameter('compressed_image_topic', '/camera/image_raw/compressed')
+        self.declare_parameter('use_compressed', False)
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('pose_topic', '/amcl_pose')
+        self.declare_parameter('scan_topic', '/scan')
         self.declare_parameter('cmd_vel_topic', '/cmd_vel')
         self.declare_parameter('holonomic_mode_topic', '/holonomic_mode')
+        self.declare_parameter('initialpose_topic', '/initialpose')
         self.declare_parameter('jpeg_quality', 70)
+        self.declare_parameter('stream_max_width', 0)   # 0 = no downscale
+        self.declare_parameter('stream_fps', 15)
         self.declare_parameter('port', 5000)
 
         # --- suspect_matcher integration params -------------------------
@@ -109,16 +135,21 @@ class DashboardNode(Node):
         self.declare_parameter('detector_node_name', '/yolo_detect_node')
         self.declare_parameter('match_topic', '/suspect_feature_match')
         self.declare_parameter('match_detail_topic', '/suspect_feature_match_detail')
+        self.declare_parameter('suspect_pose_topic', '/suspect_pose')
         self.declare_parameter('reference_image_path', '/tmp/reference_crop.jpg')
         self.declare_parameter('candidate_image_path', '/tmp/candidate_crop.jpg')
         self.declare_parameter('candidate_basename', 'candidate')
 
         image_topic = self.get_parameter('image_topic').value
+        compressed_image_topic = self.get_parameter('compressed_image_topic').value
+        self.use_compressed = self.get_parameter('use_compressed').value
         map_topic = self.get_parameter('map_topic').value
         pose_topic = self.get_parameter('pose_topic').value
         cmd_vel_topic = self.get_parameter('cmd_vel_topic').value
         holonomic_topic = self.get_parameter('holonomic_mode_topic').value
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
+        self.stream_max_width = self.get_parameter('stream_max_width').value
+        self.stream_fps = max(1, int(self.get_parameter('stream_fps').value))
         self.port = self.get_parameter('port').value
 
         self.capture_crop_service = self.get_parameter('capture_crop_service').value
@@ -126,6 +157,7 @@ class DashboardNode(Node):
         self.detector_node_name = self.get_parameter('detector_node_name').value
         match_topic = self.get_parameter('match_topic').value
         match_detail_topic = self.get_parameter('match_detail_topic').value
+        suspect_pose_topic = self.get_parameter('suspect_pose_topic').value
         self.reference_image_path = self.get_parameter('reference_image_path').value
         self.candidate_image_path = self.get_parameter('candidate_image_path').value
         self.candidate_basename = self.get_parameter('candidate_basename').value
@@ -133,6 +165,7 @@ class DashboardNode(Node):
         # latest match result, guarded by self.lock
         self.latest_match = None          # bool or None
         self.latest_match_detail = None   # str or None
+        self.latest_suspect = None        # {'x', 'y'} in map frame, or None
 
         # map/pose from Nav2 are typically published with TRANSIENT_LOCAL /
         # RELIABLE QoS — match it or you'll silently receive nothing.
@@ -140,12 +173,37 @@ class DashboardNode(Node):
         map_qos.reliability = QoSReliabilityPolicy.RELIABLE
         map_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
 
-        self.create_subscription(Image, image_topic, self.on_image, 10)
+        # Image source: compressed passthrough (cheap — the camera already did
+        # the JPEG encode, we just relay bytes) vs raw (we encode each frame).
+        # QoS: camera streams are usually BEST_EFFORT; match it so we don't
+        # silently receive nothing from a sensor-data publisher.
+        img_qos = QoSProfile(depth=1)
+        img_qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        if self.use_compressed:
+            self.create_subscription(
+                CompressedImage, compressed_image_topic, self.on_compressed_image,
+                img_qos)
+            self._image_source = compressed_image_topic
+        else:
+            self.create_subscription(Image, image_topic, self.on_image, img_qos)
+            self._image_source = image_topic
+
         self.create_subscription(OccupancyGrid, map_topic, self.on_map, map_qos)
         self.create_subscription(PoseWithCovarianceStamped, pose_topic, self.on_pose, 10)
 
+        # laser scan: sensor stream -> BEST_EFFORT, throttled before pushing
+        # to the browser (raw 10-30 Hz x hundreds of points is too heavy)
+        scan_topic = self.get_parameter('scan_topic').value
+        scan_qos = QoSProfile(depth=1)
+        scan_qos.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        self.create_subscription(LaserScan, scan_topic, self.on_scan, scan_qos)
+        self._last_scan_emit = 0.0
+
         self.cmd_vel_pub = self.create_publisher(Twist, cmd_vel_topic, 10)
         self.holonomic_pub = self.create_publisher(Bool, holonomic_topic, 10)
+        initialpose_topic = self.get_parameter('initialpose_topic').value
+        self.initialpose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, initialpose_topic, 10)
 
         # --- suspect_matcher: service clients + result subscriptions -----
         # Use a reentrant callback group so service calls made from the Flask
@@ -165,19 +223,56 @@ class DashboardNode(Node):
                                   callback_group=self.cb_group)
         self.create_subscription(String, match_detail_topic, self.on_match_detail, 10,
                                   callback_group=self.cb_group)
+        # Suspect location is published latched (TRANSIENT_LOCAL) so we still
+        # get the last fix even if the dashboard subscribes late.
+        self.create_subscription(PoseStamped, suspect_pose_topic, self.on_suspect_pose,
+                                  map_qos, callback_group=self.cb_group)
 
         self.get_logger().info(
-            f'Dashboard node up. image={image_topic} map={map_topic} '
+            f'Dashboard node up. image_source={self._image_source} '
+            f'(compressed={self.use_compressed}) map={map_topic} '
             f'pose={pose_topic} cmd_vel={cmd_vel_topic} holonomic={holonomic_topic}'
         )
 
     # --- subscription callbacks ------------------------------------------
+    def _maybe_downscale(self, cv_img):
+        """Downscale to stream_max_width if set and the frame is wider."""
+        if self.stream_max_width and cv_img.shape[1] > self.stream_max_width:
+            scale = self.stream_max_width / cv_img.shape[1]
+            new_h = int(cv_img.shape[0] * scale)
+            cv_img = cv2.resize(cv_img, (self.stream_max_width, new_h),
+                                 interpolation=cv2.INTER_AREA)
+        return cv_img
+
     def on_image(self, msg: Image):
         try:
             cv_img = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(f'image convert failed: {exc}')
             return
+        cv_img = self._maybe_downscale(cv_img)
+        ok, buf = cv2.imencode('.jpg', cv_img, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+        if ok:
+            with self.lock:
+                self.latest_frame_jpeg = buf.tobytes()
+
+    def on_compressed_image(self, msg: CompressedImage):
+        # Fast path: the camera already produced compressed (usually JPEG)
+        # bytes. If we don't need to downscale, relay them verbatim — no
+        # decode, no re-encode, near-zero CPU. Only pay decode+encode cost
+        # when a downscale is actually requested.
+        data = bytes(msg.data)
+        fmt = (msg.format or '').lower()
+        if not self.stream_max_width and ('jpeg' in fmt or 'jpg' in fmt or not fmt):
+            with self.lock:
+                self.latest_frame_jpeg = data
+            return
+        # need to resize, or it's not JPEG (e.g. png) -> decode, scale, re-encode
+        arr = np.frombuffer(data, np.uint8)
+        cv_img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if cv_img is None:
+            return
+        cv_img = self._maybe_downscale(cv_img)
         ok, buf = cv2.imencode('.jpg', cv_img, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if ok:
             with self.lock:
@@ -225,6 +320,40 @@ class DashboardNode(Node):
             self.latest_pose = pose
         self.socketio.emit('pose_update', pose)
 
+    def on_scan(self, msg: LaserScan):
+        # Throttle browser pushes to ~5 Hz regardless of the lidar rate
+        now = time.time()
+        if now - self._last_scan_emit < 0.2:
+            return
+        self._last_scan_emit = now
+
+        with self.lock:
+            pose = dict(self.latest_pose)
+        px, py = pose['x'], pose['y']
+        pyaw = math.radians(pose['yaw_deg'])
+        cos_y, sin_y = math.cos(pyaw), math.sin(pyaw)
+
+        # Downsample to <=240 points to keep the payload phone-friendly.
+        n = len(msg.ranges)
+        if n == 0:
+            return
+        step = max(1, n // 240)
+
+        # NOTE: assumes the laser frame ~= base frame (no mounting offset /
+        # rotation). Good enough for display; not for mapping math.
+        pts = []
+        angle = msg.angle_min
+        for i in range(0, n, step):
+            r = msg.ranges[i]
+            a = msg.angle_min + i * msg.angle_increment
+            if math.isfinite(r) and msg.range_min < r < msg.range_max:
+                lx = r * math.cos(a)
+                ly = r * math.sin(a)
+                wx = px + lx * cos_y - ly * sin_y
+                wy = py + lx * sin_y + ly * cos_y
+                pts.append([round(wx, 3), round(wy, 3)])
+        self.socketio.emit('scan_update', {'points': pts})
+
     def on_match(self, msg: Bool):
         with self.lock:
             self.latest_match = bool(msg.data)
@@ -234,6 +363,17 @@ class DashboardNode(Node):
         with self.lock:
             self.latest_match_detail = msg.data
         self.socketio.emit('match_detail', {'detail': msg.data})
+
+    def on_suspect_pose(self, msg: PoseStamped):
+        # Map-frame suspect location; the browser projects it to map pixels the
+        # same way it does the robot pose (via /map_info).
+        suspect = {
+            'x': msg.pose.position.x,
+            'y': msg.pose.position.y,
+        }
+        with self.lock:
+            self.latest_suspect = suspect
+        self.socketio.emit('suspect_update', suspect)
 
     # --- called from Flask thread -----------------------------------------
     def publish_cmd_vel(self, linear_x: float, linear_y: float, angular_z: float):
@@ -248,6 +388,25 @@ class DashboardNode(Node):
         self.holonomic_pub.publish(Bool(data=self.holonomic_mode))
         self.get_logger().info(f'holonomic_mode -> {self.holonomic_mode}')
         return self.holonomic_mode
+
+    def publish_initial_pose(self, x: float, y: float, yaw: float):
+        """Publish an AMCL initial pose estimate (same semantics as RViz's
+        '2D Pose Estimate' tool). yaw in radians, map frame."""
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'map'
+        msg.pose.pose.position.x = float(x)
+        msg.pose.pose.position.y = float(y)
+        msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
+        msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
+        # RViz default initial-pose covariance: 0.25 m^2 on x/y,
+        # ~0.068 rad^2 on yaw — gives AMCL a sane uncertainty to converge from
+        msg.pose.covariance[0] = 0.25
+        msg.pose.covariance[7] = 0.25
+        msg.pose.covariance[35] = 0.06853891945200942
+        self.initialpose_pub.publish(msg)
+        self.get_logger().info(
+            f'initialpose -> x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}deg')
 
     def get_holonomic(self) -> bool:
         return self.holonomic_mode
@@ -267,6 +426,10 @@ class DashboardNode(Node):
     def get_pose(self):
         with self.lock:
             return dict(self.latest_pose)
+
+    def get_suspect(self):
+        with self.lock:
+            return dict(self.latest_suspect) if self.latest_suspect else None
 
     # --- suspect_matcher actions (called from Flask thread) ---------------
     def _set_detector_basename(self, basename: str, timeout_sec: float = 5.0) -> bool:
@@ -336,7 +499,9 @@ class DashboardNode(Node):
 # ---------------------------------------------------------------------------
 # Flask + SocketIO app
 # ---------------------------------------------------------------------------
-app = Flask(__name__, template_folder=_find_template_folder())
+app = Flask(__name__,
+            template_folder=_find_template_folder(),
+            static_folder=_find_static_folder())
 app.config['SECRET_KEY'] = 'dashboard-flask-secret'
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins='*')
 
@@ -354,12 +519,13 @@ def index():
 
 def mjpeg_generator():
     boundary = b'--frame'
+    period = 1.0 / node.stream_fps
     while True:
         frame = node.get_frame()
         if frame is not None:
             yield (boundary + b'\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        time.sleep(0.05)  # ~20 fps cap; matches typical dashboard use, not a hard limit
+        time.sleep(period)  # paced by stream_fps param (default 15)
 
 
 @app.route('/video_feed')
@@ -406,6 +572,14 @@ def handle_set_holonomic(data):
     new_state = node.set_holonomic(enabled)
     # broadcast so every open tab/browser stays in sync
     socketio.emit('holonomic_state', {'enabled': new_state})
+
+
+@socketio.on('set_initial_pose')
+def handle_set_initial_pose(data):
+    node.publish_initial_pose(
+        float(data.get('x', 0.0)),
+        float(data.get('y', 0.0)),
+        float(data.get('yaw', 0.0)))
 
 
 # ---------------------------------------------------------------------------
@@ -465,6 +639,14 @@ def candidate_jpg():
 @app.route('/suspect/result')
 def suspect_result():
     return jsonify(node.get_match())
+
+
+@app.route('/suspect/pose')
+def suspect_pose():
+    # Last known map-frame suspect location, or null if none yet. Used by the
+    # browser to bootstrap the marker on (re)load, since the socket event only
+    # fires on a new match.
+    return jsonify(node.get_suspect())
 
 
 # ---------------------------------------------------------------------------
