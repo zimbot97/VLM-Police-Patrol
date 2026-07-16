@@ -156,10 +156,15 @@ run out of memory, and `--parallel-workers 4` bounds how many packages build at 
 
 **SLAM demo** — sped-up run of the map building from the robot's point of view:
 
-<video src="https://raw.githubusercontent.com/zimbot97/VLM-Police-Patrol/main/docs/videos/slam/slam_pov_speed.mp4" controls muted width="640">
-  Your browser can't play this inline —
-  ▶️ <a href="docs/videos/slam/slam_pov_speed.mp4">watch slam_pov_speed.mp4</a>.
-</video>
+<!--
+  TO EMBED AN INLINE PLAYER: edit this README on github.com, then drag
+  docs/videos/slam/slam_pov_speed.mp4 into the editor at this spot. GitHub uploads
+  it and inserts a https://github.com/user-attachments/assets/<uuid> URL — that
+  renders a native video player. (A repo /raw/ URL does NOT render inline.)
+  Paste the generated URL on its own line below, then delete this comment and the link.
+-->
+
+▶️ [Watch slam_pov_speed.mp4](docs/videos/slam/slam_pov_speed.mp4) — sped-up SLAM POV run.
 
 More clips (raw video, original speed): ▶️ [slam_fov.mp4](docs/videos/slam/slam_fov.mp4) · ▶️ [map.mp4](docs/videos/slam/map.mp4)
 
