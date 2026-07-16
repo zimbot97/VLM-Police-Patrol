@@ -64,7 +64,7 @@ component also has its own script under [`sh/`](sh/) and a ROS 2 launch file (se
 ## Prerequisites
 
 - **Hardware:** RDK X5, Astra depth camera, RP2040 (Pico) mecanum base + IMU, OLED status display, 11.1 V battery.
-- **Software:** ROS 2 **Humble**, workspace built and installed at `~/ros2_ws`.
+- **Software:** RDK OS ≥ 3.5.0 (Ubuntu 22.04.5 LTS, kernel 6.1.83 aarch64), ROS 2 **Humble** (TROS-Humble), workspace built and installed at `~/ros2_ws`.
 - **Models staged on device:**
   - YOLO: `/home/sunrise/rdk_model_zoo/samples/vision/ultralytics_yolo/model/yolo11n_detect_bayese_640x640_nv12.bin`
   - VLM (InternVL2.5-1B): `/home/sunrise/models/internvl2_5_1b/vit_model_int16_v2.bin` + `Qwen2.5-0.5B-Instruct-Q4_0.gguf`

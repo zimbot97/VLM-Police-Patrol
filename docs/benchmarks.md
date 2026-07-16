@@ -29,13 +29,17 @@ timing in [vlm_inference_benchmark.md](vlm_inference_benchmark.md).
 
 ## Tool / firmware versions
 
+Versions in use (latest available at time of writing):
+
 | Component | Version |
 |-----------|---------|
-| OS / RDK image | _TBD_ |
-| ROS 2 | Humble |
-| `hobot_dnn` / `hobot_llamacpp` | _TBD_ |
-| BPU toolchain (OpenExplorer) | _TBD_ |
-| Camera driver (`ros2_astra_camera`) | _TBD_ |
+| OS | Ubuntu 22.04.5 LTS (Jammy), kernel **6.1.83 aarch64 PREEMPT** |
+| RDK OS image | RDK OS ≥ 3.5.0 (BPU Bayes-e) |
+| ROS 2 | Humble (TROS-Humble / TogetheROS.Bot) |
+| `hobot_dnn` / `hobot_llamacpp` | latest — D-Robotics GitHub `main` (TROS-Humble) |
+| BPU toolchain (OpenExplorer) | v1.2.8 (py310) |
+| llama.cpp (in `hobot_llamacpp`) | build b4749 |
+| Camera driver (`ros2_astra_camera`) | latest — Orbbec/Astra ROS 2 driver `main` |
 
 ## Concurrent workload (multi-task)
 
