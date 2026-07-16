@@ -164,7 +164,8 @@ run out of memory, and `--parallel-workers 4` bounds how many packages build at 
   Paste the generated URL on its own line below, then delete this comment and the link.
 -->
 
-▶️ [Watch slam_pov_speed.mp4](docs/videos/slam/slam_pov_speed.mp4) — sped-up SLAM POV run.
+▶️ [Watch slam_pov_speed.mp4]
+https://github.com/user-attachments/assets/23d59549-206d-421f-9495-abf1c81d5321
 
 More clips (raw video, original speed): ▶️ [slam_fov.mp4](docs/videos/slam/slam_fov.mp4) · ▶️ [map.mp4](docs/videos/slam/map.mp4)
 
