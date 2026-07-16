@@ -115,6 +115,8 @@ Consumes the detector's published topics (it does not depend on their internals)
 
 The frozen fix is emitted only when `match_topic` goes true (the fix is consumed per match). Output is a JSON file, a latched RViz `Marker` sphere, and a latched `PoseStamped`.
 
+> **Limitation:** we run in `amcl_pose` mode because the RDK X5 CPU already sits ~90 % under the full stack + VLM (see [docs/technical.md](../../docs/technical.md#3-known-issues)), so the heavier `pointcloud` centroid+TF path is avoided. The suspect is therefore reported at the robot's own pose — drive up to whoever you're checking.
+
 Parameters:
 
 | Name | Type | Default |
