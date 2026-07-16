@@ -156,7 +156,7 @@ run out of memory, and `--parallel-workers 4` bounds how many packages build at 
 
 **SLAM demo** — sped-up run of the map building from the robot's point of view:
 
-https://github.com/zimbot97/VLM-Police-Patrol/raw/main/docs/videos/slam/slam_pov_speed.mp4
+<video src="https://github.com/zimbot97/VLM-Police-Patrol/raw/main/docs/videos/slam/slam_pov_speed.mp4" controls muted width="640"></video>
 
 More clips (raw video, original speed): ▶️ [slam_fov.mp4](docs/videos/slam/slam_fov.mp4) · ▶️ [map.mp4](docs/videos/slam/map.mp4)
 
