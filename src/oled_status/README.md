@@ -6,6 +6,10 @@ Drives a 0.96" SSD1306 OLED as a status HUD for the VLM-Police-Patrol robot, sho
 
 `oled_status` is a single-node ROS 2 package that runs on the RDK X5 and renders a 128x64 monochrome status display over I2C. It subscribes to existing workspace topics (suspect match results, VLM prompt activity, capture state, and human detections) and derives a highest-priority state to animate, while continuously showing the current IP address and CPU/BPU telemetry. If `luma.oled`/Pillow or the panel are missing, it degrades gracefully to headless logging. It sits alongside the perception and matching nodes as the robot's on-device status indicator (see the workspace root [../../README.md](../../README.md)).
 
+![OLED state overview](img/states_overview.png)
+
+*The HUD states: PATROL/default (CCTV lens), HUMAN, ANALYZE/CAPTURE (spinner), MATCH (police badge), and NOMATCH (cross), each with the IP header and CPU/BPU stats column.*
+
 ## Nodes / executables
 
 | Executable | Source file | Role |
