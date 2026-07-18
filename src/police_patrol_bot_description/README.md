@@ -6,6 +6,10 @@ URDF/xacro robot description and RViz configuration for the VLM-Police-Patrol me
 
 This package provides the geometric and kinematic model of the mecanum patrol robot built on the RDK X5 platform. It defines the robot's links, joints, and TF frames as a xacro-expandable URDF, exposes the model as `robot_description` for `robot_state_publisher`, and ships an RViz display config for previewing the model and its TF tree. It is a description-only package — no kinematics or odometry run here (those run onboard the RP2040 Pico; operational bringup lives in `police_patrol_bot`).
 
+![URDF model in RViz](img/urdf.png)
+
+*The URDF rendered in RViz2: 3-layer acrylic chassis, 4 mecanum wheels, and the pitched camera bar (top).*
+
 ## Robot model
 
 Defined in `urdf/mecanum_robot.urdf.xacro` (robot name `mecanum_robot`). It models a 3-layer acrylic chassis with 4 mecanum wheels and mounted sensors.
@@ -51,6 +55,12 @@ base_footprint
     ├── {FL,RL,RR,FR}_motor
     └── b2m_{fl,fr,rl,rr}_standoff
 ```
+
+TF frames overlaid on the model (RViz), and the `view_frames` graph:
+
+![TF frames on the model](img/urdf_tf.png)
+
+![view_frames TF tree](img/frames.png)
 
 ## Launch
 

@@ -64,6 +64,11 @@ component also has its own script under [`sh/`](sh/) and a ROS 2 launch file (se
 ## Prerequisites
 
 - **Hardware:** RDK X5, Astra depth camera, RP2040 (Pico) mecanum base + IMU, OLED status display, 11.1 V battery.
+
+![Robot URDF model](./src/police_patrol_bot_description/img/urdf.png)
+
+*Robot URDF model (RViz): 3-layer acrylic chassis, 4 mecanum wheels, pitched depth-camera bar. Full description and TF tree in [`police_patrol_bot_description`](./src/police_patrol_bot_description/README.md).*
+
 - **Software:** RDK OS ≥ 3.5.0 (Ubuntu 22.04.5 LTS, kernel 6.1.83 aarch64), ROS 2 **Humble** (TROS-Humble), workspace built and installed at `~/ros2_ws`.
 - **Models staged on device:**
   - YOLO: `/home/sunrise/rdk_model_zoo/samples/vision/ultralytics_yolo/model/yolo11n_detect_bayese_640x640_nv12.bin`
