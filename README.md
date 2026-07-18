@@ -167,6 +167,56 @@ More clips (raw video, original speed): ▶️ [slam_fov.mp4](docs/videos/slam/s
 
 ---
 
+## Hardware assembly
+
+The robot is built on a **3-layer mecanum chassis** (four 60 mm mecanum wheels with
+TT gear-motor + encoders). We used this kit:
+**[AliExpress — mecanum chassis](https://www.aliexpress.com/item/1005012241260865.html)**.
+
+The three acrylic plates (base plate is 128 × 198 mm — see hole layout in
+[docs/images/mpu9250_placement.png](docs/images/mpu9250_placement.png)):
+
+| Plate | Mounts |
+|-------|--------|
+| **Bottom** | 4× mecanum motors + wheels, 11.1 V battery, motor driver |
+| **Second (middle)** | RP2040 (Pico) firmware board, **MPU9250 IMU** |
+| **Top** | RDK X5, depth-camera bar, OLED status display |
+
+### Mounting the MPU9250 IMU (second plate)
+
+Mount the MPU-9250 board on the **middle plate**, roughly centered near the Ø10 hub hole,
+per [docs/images/mpu9250_placement.png](docs/images/mpu9250_placement.png):
+
+- Orient the board so its **+X axis points to the robot's front** (align with the plate
+  arrow) — the URDF `imu_joint` assumes this orientation.
+- Keep it **flat and rigid** (double-sided foam tape or standoffs); flex or tilt shows up
+  as EKF drift.
+- Wire to the Pico's **I2C1** (`SDA=GP26`, `SCL=GP27`, `400 kHz`, address `0x68`) as in the
+  [wiring schematic](docs/images/schematic.svg).
+- Keep the robot **still at power-on** — gyro bias is sampled at boot (see
+  [docs/technical.md §2.2](docs/technical.md#22-imu-mpu9250)).
+
+### Camera position
+
+The depth camera is described in the URDF as a fixed `camera_joint` on `base_link`. To
+change its mount (height, forward offset, or pitch), edit the joint origin in
+[`urdf/mecanum_robot.urdf.xacro`](src/police_patrol_bot_description/urdf/mecanum_robot.urdf.xacro):
+
+```xml
+<joint name="camera_joint" type="fixed">
+  <parent link="base_link"/>
+  <child  link="camera_link"/>
+  <!-- xyz = forward, left, up (m); rpy pitch -16° tilts +X (forward) upward -->
+  <origin xyz="0.090 0 ${2*layer_dz + 0.060}" rpy="0 ${radians(-16)} 0"/>
+</joint>
+```
+
+Match the physical camera bar to whatever you set here, then rebuild
+`police_patrol_bot_description` so TF reflects reality (bad camera TF = wrong suspect
+localization). See [`police_patrol_bot_description`](src/police_patrol_bot_description/README.md).
+
+---
+
 ## One-shot launch
 
 [`sh/master.sh`](sh/master.sh) brings the entire stack up in order, spacing each
