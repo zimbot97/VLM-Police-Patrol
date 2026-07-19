@@ -215,6 +215,30 @@ Match the physical camera bar to whatever you set here, then rebuild
 `police_patrol_bot_description` so TF reflects reality (bad camera TF = wrong suspect
 localization). See [`police_patrol_bot_description`](src/police_patrol_bot_description/README.md).
 
+### Hardware E-stop relay (RF)
+
+A wireless **RF relay module** (SRD-12VDC-SL-C, 12 V receiver) is wired **in series with
+the motor-driver power feed** so a key-fob press physically cuts drive power — a true
+hardware E-stop, independent of ROS/software.
+
+Wiring (per the module's "Control DC output" schematic):
+
+| Relay terminal | Connect to |
+|----------------|------------|
+| `+V` / `−V` | 12 V power input (battery side) |
+| `COM` | 12 V **+** from battery |
+| `NO` | **+V of the motor driver** — this is the `LOAD` |
+| (motor driver −) | battery **−** directly |
+
+The relay's **`LOAD` is the motor driver**: the 12 V rail to the driver passes through
+`COM → NO`, so the RF remote (or the relay button) opening the contact de-energizes the
+driver and the wheels stop immediately. Logic power (RDK X5 / Pico) is **not** routed
+through the relay, so the compute stack keeps running and the software `cmd_vel` watchdog
+still brakes on its own. Use `NO` (normally-open) so the default state is "motors off
+until armed".
+
+> Save the module's wiring photo to `docs/images/estop_relay_wiring.png` to show it here.
+
 ---
 
 ## One-shot launch
@@ -303,8 +327,11 @@ causes the robot to **stop automatically** rather than run away.
 
 - **Software stop:** close the dashboard / stop publishing `/cmd_vel` → the 0.5 s
   watchdog brakes the motors.
-- **Hardware E-stop:** _[PLACEHOLDER]_ — a physical hardware E-stop that cuts motor
-  power is planned; document the switch location and cutoff path here once fitted.
+- **Hardware E-stop:** an **RF relay** (SRD-12VDC-SL-C) is wired in series with the
+  motor-driver power feed (`COM → NO`, `LOAD` = motor driver). A key-fob press opens the
+  contact and physically cuts drive power — independent of ROS/software. Logic power
+  (X5/Pico) is not routed through it, so the software watchdog stays active too. Wiring in
+  [Hardware E-stop relay (RF)](#hardware-e-stop-relay-rf).
 
 ---
 

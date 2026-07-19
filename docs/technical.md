@@ -211,7 +211,7 @@ against the real chassis before tuning odometry**:
 | # | Issue | Impact | Workaround / status |
 |---|-------|--------|---------------------|
 | 1 | **High CPU under VLM load** | X5 ~90 % CPU, ~70 °C with full stack + VLM (per OLED) | Teleop still smooth (motion is on the Pico). Ensure adequate airflow/heatsink; consider a fan for sustained runs. |
-| 2 | **Hardware E-stop not yet fitted** | No physical power-cut for motors | Software 0.5 s `cmd_vel` watchdog brakes on signal loss; hardware E-stop is a `[PLACEHOLDER]` (see README). |
+| 2 | **E-stop cuts motor power only, not logic** | An RF relay in series with the motor-driver feed (`COM → NO`, `LOAD` = motor driver) physically stops the wheels; the X5/Pico stay powered | By design — compute keeps running so the software `cmd_vel` watchdog also brakes. Wiring in the [README assembly](../README.md#hardware-e-stop-relay-rf). |
 | 3 | **SLAM depends on off-board laptop** | Mapping stops if the laptop drops off the hotspot | Keep laptop on `police_patrol`; matching `ROS_DOMAIN_ID` required for discovery. |
 | 4 | **VLM must be started separately** | `compare.launch.py` does not start `hobot_llamacpp` (needs model config staged into cwd) | `master.sh` launches it via [`llamacpp.sh`](../sh/llamacpp.sh); run manually if launching piecemeal. |
 | 5 | **Vendor `src/*` dirs are placeholders** | `hobot_dnn`, `hobot_msgs`, `ros2_astra_camera`, `uros` are empty in the repo | Installed separately on the device; `src/ros2.repos` is empty. |

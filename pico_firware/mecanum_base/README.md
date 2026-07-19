@@ -56,7 +56,12 @@ Notes: RL and RR have IN1/IN2 swapped vs silkscreen (deliberate). PWM runs at wr
 | `MAX_W` | 20.0 rad/s | Max wheel angular speed; sets 100% PWM duty. Wheel commands above this saturate (duty clamped to 1.0) — caps effective output. |
 | `WD_SECS` | 0.5 s | cmd_vel watchdog. If no `cmd_vel` arrives within this window, the odom timer calls `all_brake()` (all motors active-braked). |
 
-On agent disconnect the firmware also calls `all_brake()` in `destroy_entities()`. **There is NO hardware e-stop yet (planned)** — braking is entirely firmware/software driven.
+On agent disconnect the firmware also calls `all_brake()` in `destroy_entities()`.
+
+**Hardware E-stop:** an RF relay (SRD-12VDC-SL-C) is wired in series with the motor-driver
+power feed (`COM → NO`, `LOAD` = motor driver), so a key-fob press physically cuts drive
+power independently of this firmware. The Pico stays powered (logic is not routed through
+the relay), so the `cmd_vel` watchdog above still runs. Wiring: [README assembly](../../README.md#hardware-e-stop-relay-rf).
 
 ## Build & flash
 
