@@ -18,6 +18,8 @@ See [docs/technical.md](docs/technical.md) for the full engineering reference
 
 ## Demo
 
+[![Watch the full demo on YouTube](https://img.youtube.com/vi/03x9mwHFfY8/maxresdefault.jpg)](https://www.youtube.com/watch?v=03x9mwHFfY8)
+
 ▶️ **[Watch the full demo on YouTube](https://www.youtube.com/watch?v=03x9mwHFfY8)**
 
 **Live patrol console** — the Flask dashboard streaming real-time YOLO person detection
