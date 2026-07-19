@@ -18,6 +18,8 @@ See [docs/technical.md](docs/technical.md) for the full engineering reference
 
 ## Demo
 
+▶️ **[Watch the full demo on YouTube](https://www.youtube.com/watch?v=03x9mwHFfY8)**
+
 **Live patrol console** — the Flask dashboard streaming real-time YOLO person detection
 (`person: 0.94`), the SLAM map with the robot pose, and holonomic teleop:
 
