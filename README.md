@@ -219,7 +219,8 @@ localization). See [`police_patrol_bot_description`](src/police_patrol_bot_descr
 
 A wireless **RF relay module** (SRD-12VDC-SL-C, 12 V receiver) is wired **in series with
 the motor-driver power feed** so a key-fob press physically cuts drive power — a true
-hardware E-stop, independent of ROS/software.
+hardware E-stop, independent of ROS/software. We used this module:
+**[Shopee — 12 V RF relay + remote](https://shopee.com.my/product/188678203/43382344394)**.
 
 Wiring (per the module's "Control DC output" schematic):
 
