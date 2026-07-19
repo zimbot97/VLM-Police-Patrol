@@ -16,6 +16,25 @@ See [docs/technical.md](docs/technical.md) for the full engineering reference
 
 ---
 
+## Demo
+
+**Live patrol console** — the Flask dashboard streaming real-time YOLO person detection
+(`person: 0.94`), the SLAM map with the robot pose, and holonomic teleop:
+
+![Patrol console with live YOLO detection](docs/images/yolo.png)
+
+**Suspect feature match** — the VLM compares a reference photo against the captured
+candidate by clothing colour/type and hairstyle:
+
+| ✅ Match (3/3 fields) | ❌ No match (1/3 fields) |
+|----------------------|--------------------------|
+| ![Suspect match](docs/images/match.png) | ![Suspect no match](docs/images/Notmatch.png) |
+
+Same suspect → `blue / jacket / short black hair` matches on all three fields. Different
+person → clothing colour and type differ, so the result is **NO MATCH**.
+
+---
+
 ## Quick Start (clone → build → launch)
 
 ```bash
@@ -65,9 +84,13 @@ component also has its own script under [`sh/`](sh/) and a ROS 2 launch file (se
 
 - **Hardware:** RDK X5, Astra depth camera, RP2040 (Pico) mecanum base + IMU, OLED status display, 11.1 V battery.
 
-![Robot URDF model](./src/police_patrol_bot_description/img/urdf.png)
+| Real robot | URDF model (RViz) |
+|------------|-------------------|
+| ![Assembled robot](./docs/images/robot.jpeg) | ![Robot URDF model](./src/police_patrol_bot_description/img/urdf.png) |
 
-*Robot URDF model (RViz): 3-layer acrylic chassis, 4 mecanum wheels, pitched depth-camera bar. Full description and TF tree in [`police_patrol_bot_description`](./src/police_patrol_bot_description/README.md).*
+*Left: the assembled robot — 3-layer acrylic chassis, 4 mecanum wheels, RGB-D camera bar,
+and the RF key-fob hardware E-stop. Right: the matching URDF model. Full description and TF
+tree in [`police_patrol_bot_description`](./src/police_patrol_bot_description/README.md).*
 
 - **Software:** RDK OS ≥ 3.5.0 (Ubuntu 22.04.5 LTS, kernel 6.1.83 aarch64), ROS 2 **Humble** (TROS-Humble), workspace built and installed at `~/ros2_ws`.
 - **Models staged on device:**
