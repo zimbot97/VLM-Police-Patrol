@@ -238,7 +238,10 @@ through the relay, so the compute stack keeps running and the software `cmd_vel`
 still brakes on its own. Use `NO` (normally-open) so the default state is "motors off
 until armed".
 
-> Save the module's wiring photo to `docs/images/estop_relay_wiring.png` to show it here.
+![RF relay E-stop wiring](docs/images/estop_relay_wiring.png)
+
+*Control-DC-output wiring: 12 V power input to the relay, `COM`/`NO` in series with the
+motor-driver `+V` (the `LOAD`), so the RF remote cuts drive power.*
 
 ---
 
